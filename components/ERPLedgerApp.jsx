@@ -128,13 +128,21 @@ export default function ERPLedgerApp() {
   const fetchCustomerTransactions = async (customerName) => {
     try {
       setLoading(true);
-      const response = await fetch(`${API_URL}?method=getCustomerTransactions&customerName=${encodeURIComponent(customerName)}`, {
+      setError(null);
+      
+      const encodedName = encodeURIComponent(customerName);
+      const url = `${API_URL}?method=getCustomerTransactions&customerName=${encodedName}`;
+      
+      console.log('Fetching transactions from:', url);
+      
+      const response = await fetch(url, {
         method: 'GET',
         mode: 'cors',
         headers: { 'Accept': 'application/json' }
       });
       
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      
       const data = await response.json();
       
       if (data.success) {
@@ -357,7 +365,7 @@ export default function ERPLedgerApp() {
           />
         )}
         {activeTab === 'transactions' && (
-          <
+          <TransactionsView
             customer={selectedCustomer}
             transactions={transactions}
             onAddTransaction={() => setShowAddTransaction(true)}
@@ -551,11 +559,6 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
                 <th className="py-3 px-4 text-left text-sm font-semibold">Date</th>
                 <th className="py-3 px-4 text-left text-sm font-semibold">Description</th>
                 <th className="py-3 px-4 text-left text-sm font-semibold">Item</th>
-                <th className="py-3 px-4 text-right text-sm font-semibold">Weight/Qty</th>
-                <th className="py-3 px-4 text-right text-sm font-semibold">Rate</th>
-                <th className="py-3 px-4 text-left text-sm font-semibold">Payment Method</th>
-                <th className="py-3 px-4 text-left text-sm font-semibold">Bank Name</th>
-                <th className="py-3 px-4 text-left text-sm font-semibold">Cheque No</th>
                 <th className="py-3 px-4 text-right text-sm font-semibold">Debit</th>
                 <th className="py-3 px-4 text-right text-sm font-semibold">Credit</th>
                 <th className="py-3 px-4 text-right text-sm font-semibold">Balance</th>
@@ -569,15 +572,6 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
                   <td className="py-3 px-4 text-sm">{txn.date instanceof Date ? txn.date.toLocaleDateString() : txn.date}</td>
                   <td className="py-3 px-4 text-sm">{txn.description}</td>
                   <td className="py-3 px-4 text-sm">{txn.item}</td>
-                  <td className="py-3 px-4 text-sm text-right">
-                    {txn.weightQty || '-'}
-                  </td>
-                  <td className="py-3 px-4 text-sm text-right">
-                    {txn.rate ? `Rs. ${parseFloat(txn.rate).toLocaleString()}` : '-'}
-                  </td>
-                  <td className="py-3 px-4 text-sm">{txn.paymentMethod || '-'}</td>
-                  <td className="py-3 px-4 text-sm">{txn.bankName || '-'}</td>
-                  <td className="py-3 px-4 text-sm">{txn.chequeNo || '-'}</td>
                   <td className="py-3 px-4 text-sm text-right font-semibold text-red-600">
                     {txn.debit ? `Rs. ${parseFloat(txn.debit).toLocaleString()}` : '-'}
                   </td>
@@ -607,7 +601,7 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
       </div>
     </div>
   );
-} // <-- This closing brace was missing
+}
 
 function BalanceSheetView({ balanceSheet, onViewCustomer }) {
   return (
@@ -850,9 +844,9 @@ function AddTransactionModal({ customers, selectedCustomer, onClose, onSubmit, l
               >
                 <option value="Sale">Sale</option>
                 <option value="Payment Received - Cash">Payment Received - Cash</option>
-                <option value="Payment Received - Bank">Payment Received - BankTransfer</option>
+                <option value="Payment Received - Bank">Payment Received - Bank</option>
                 <option value="Payment Given - Cash">Payment Given - Cash</option>
-                <option value="Payment Given - Bank">Payment Given - Banktransfer</option>
+                <option value="Payment Given - Bank">Payment Given - Bank</option>
               </select>
             </div>
           </div>
