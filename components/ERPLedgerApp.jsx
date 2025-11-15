@@ -550,7 +550,7 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
         </div>
       </div>
 
-      <div className="bg-white rounded-xl shadow-lg overflow-hidden">
+       <div className="bg-white rounded-xl shadow-lg overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead className="bg-gradient-to-r from-blue-500 to-purple-500 text-white">
@@ -561,6 +561,7 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
                 <th className="py-3 px-4 text-left text-sm font-semibold">Item</th>
                 <th className="py-3 px-4 text-right text-sm font-semibold">Weight/Qty</th>
                 <th className="py-3 px-4 text-right text-sm font-semibold">Rate</th>
+                <th className="py-3 px-4 text-left text-sm font-semibold">Transaction Type</th> {/* ADDED */}
                 <th className="py-3 px-4 text-left text-sm font-semibold">Payment Method</th>
                 <th className="py-3 px-4 text-left text-sm font-semibold">Bank Name</th>
                 <th className="py-3 px-4 text-left text-sm font-semibold">Cheque No</th>
@@ -583,6 +584,7 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
                   <td className="py-3 px-4 text-sm text-right font-medium">
                     {txn.rate ? `Rs. ${parseFloat(txn.rate).toLocaleString()}` : '-'}
                   </td>
+                  <td className="py-3 px-4 text-sm">{txn.transactionType || '-'}</td> {/* ADDED */}
                   <td className="py-3 px-4 text-sm">{txn.paymentMethod || '-'}</td>
                   <td className="py-3 px-4 text-sm">{txn.bankName || '-'}</td>
                   <td className="py-3 px-4 text-sm">{txn.chequeNo || '-'}</td>
