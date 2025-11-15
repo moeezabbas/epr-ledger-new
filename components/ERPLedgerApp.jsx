@@ -507,6 +507,33 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
     );
   }
 
+  // Calculate running balance properly
+  const calculateRunningBalance = (transactions) => {
+    let balance = 0;
+    return transactions.map(txn => {
+      const debit = parseFloat(txn.debit) || 0;
+      const credit = parseFloat(txn.credit) || 0;
+      
+      // For opening balance, set directly
+      if (txn.description?.toLowerCase().includes('opening balance')) {
+        balance = parseFloat(txn.balance) || 0;
+      } else {
+        // Normal transaction: balance = previous balance + debit - credit
+        balance = balance + debit - credit;
+      }
+      
+      const drCr = balance >= 0 ? 'DR' : 'CR';
+      
+      return {
+        ...txn,
+        calculatedBalance: Math.abs(balance),
+        calculatedDrCr: drCr
+      };
+    });
+  };
+
+  const transactionsWithBalance = calculateRunningBalance(transactions);
+
   return (
     <div className="space-y-6">
       <div className="bg-white rounded-xl shadow-lg p-6">
@@ -517,40 +544,65 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
           </div>
           <div className="text-right">
             <p className="text-sm text-gray-600">Final Balance</p>
-            <p className="text-2xl font-bold text-gray-900">Rs. {customer.summary?.finalBalance?.toLocaleString() || '0'}</p>
-            <span className={`inline-block px-3 py-1 rounded-full text-sm font-bold mt-2 ${customer.summary?.finalDRCR === 'DR' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
-              {customer.summary?.finalDRCR || 'DR'}
+            <p className="text-2xl font-bold text-gray-900">
+              Rs. {customer.summary?.finalBalance?.toLocaleString() || '0'}
+            </p>
+            <span className={`inline-block px-3 py-1 rounded-full text-sm font-bold mt-2 ${
+              customer.summary?.finalDRCR === 'DR' ? 'bg-red-100 text-red-700' : 
+              customer.summary?.finalDRCR === 'CR' ? 'bg-green-100 text-green-700' : 
+              'bg-gray-100 text-gray-700'
+            }`}>
+              {customer.summary?.finalDRCR || 'BAL'}
             </span>
           </div>
         </div>
 
-        <div className="grid grid-cols-3 gap-4 mt-6 pt-6 border-t">
+        <div className="grid grid-cols-4 gap-4 mt-6 pt-6 border-t">
           <div>
             <p className="text-sm text-gray-600">Total Debit</p>
-            <p className="text-lg font-bold text-red-600">Rs. {customer.summary?.totalDebit?.toLocaleString() || '0'}</p>
+            <p className="text-lg font-bold text-red-600">
+              Rs. {customer.summary?.totalDebit?.toLocaleString() || '0'}
+            </p>
           </div>
           <div>
             <p className="text-sm text-gray-600">Total Credit</p>
-            <p className="text-lg font-bold text-green-600">Rs. {customer.summary?.totalCredit?.toLocaleString() || '0'}</p>
+            <p className="text-lg font-bold text-green-600">
+              Rs. {customer.summary?.totalCredit?.toLocaleString() || '0'}
+            </p>
+          </div>
+          <div>
+            <p className="text-sm text-gray-600">Net Balance</p>
+            <p className="text-lg font-bold text-blue-600">
+              Rs. {Math.abs(customer.summary?.netBalance || 0).toLocaleString()}
+            </p>
           </div>
           <div>
             <p className="text-sm text-gray-600">Transactions</p>
-            <p className="text-lg font-bold text-blue-600">{customer.summary?.transactionCount || 0}</p>
+            <p className="text-lg font-bold text-purple-600">
+              {customer.summary?.transactionCount || 0}
+            </p>
           </div>
         </div>
 
         <div className="flex gap-3 mt-6">
-          <button onClick={onAddTransaction} className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg hover:from-green-600 hover:to-green-700 transition-all shadow-lg">
+          <button 
+            onClick={onAddTransaction} 
+            className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg hover:from-green-600 hover:to-green-700 transition-all shadow-lg"
+          >
             <Plus className="w-4 h-4" />
             Add Transaction
           </button>
-          <button onClick={onBack} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-all">
+          <button 
+            onClick={onBack} 
+            className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-all"
+          >
             Back
           </button>
         </div>
       </div>
 
-       <div className="bg-white rounded-xl shadow-lg overflow-hidden">
+      {/* Fixed Transactions Table with Single Header */}
+      <div className="bg-white rounded-xl shadow-lg overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead className="bg-gradient-to-r from-blue-500 to-purple-500 text-white">
@@ -561,9 +613,9 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
                 <th className="py-3 px-4 text-left text-sm font-semibold">Item</th>
                 <th className="py-3 px-4 text-right text-sm font-semibold">Weight/Qty</th>
                 <th className="py-3 px-4 text-right text-sm font-semibold">Rate</th>
-                <th className="py-3 px-4 text-left text-sm font-semibold">Transaction Type</th> {/* ADDED */}
-                <th className="py-3 px-4 text-left text-sm font-semibold">Payment Method</th>
-                <th className="py-3 px-4 text-left text-sm font-semibold">Bank Name</th>
+                <th className="py-3 px-4 text-left text-sm font-semibold">Type</th>
+                <th className="py-3 px-4 text-left text-sm font-semibold">Payment</th>
+                <th className="py-3 px-4 text-left text-sm font-semibold">Bank</th>
                 <th className="py-3 px-4 text-left text-sm font-semibold">Cheque No</th>
                 <th className="py-3 px-4 text-right text-sm font-semibold">Debit</th>
                 <th className="py-3 px-4 text-right text-sm font-semibold">Credit</th>
@@ -572,19 +624,21 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
               </tr>
             </thead>
             <tbody>
-              {transactions.map((txn, index) => (
+              {transactionsWithBalance.map((txn, index) => (
                 <tr key={index} className="border-b border-gray-100 hover:bg-gray-50">
-                  <td className="py-3 px-4 text-sm">{txn.sn || index + 1}</td>
-                  <td className="py-3 px-4 text-sm">{txn.date instanceof Date ? txn.date.toLocaleDateString() : txn.date}</td>
+                  <td className="py-3 px-4 text-sm font-medium">{txn.sn || index + 1}</td>
+                  <td className="py-3 px-4 text-sm">
+                    {txn.date instanceof Date ? txn.date.toLocaleDateString() : txn.date}
+                  </td>
                   <td className="py-3 px-4 text-sm">{txn.description}</td>
-                  <td className="py-3 px-4 text-sm">{txn.item}</td>
+                  <td className="py-3 px-4 text-sm">{txn.item || '-'}</td>
                   <td className="py-3 px-4 text-sm text-right font-medium">
                     {txn.weightQty ? parseFloat(txn.weightQty).toLocaleString() : '-'}
                   </td>
                   <td className="py-3 px-4 text-sm text-right font-medium">
                     {txn.rate ? `Rs. ${parseFloat(txn.rate).toLocaleString()}` : '-'}
                   </td>
-                  <td className="py-3 px-4 text-sm">{txn.transactionType || '-'}</td> {/* ADDED */}
+                  <td className="py-3 px-4 text-sm">{txn.transactionType || '-'}</td>
                   <td className="py-3 px-4 text-sm">{txn.paymentMethod || '-'}</td>
                   <td className="py-3 px-4 text-sm">{txn.bankName || '-'}</td>
                   <td className="py-3 px-4 text-sm">{txn.chequeNo || '-'}</td>
@@ -595,11 +649,14 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
                     {txn.credit ? `Rs. ${parseFloat(txn.credit).toLocaleString()}` : '-'}
                   </td>
                   <td className="py-3 px-4 text-sm text-right font-bold">
-                    Rs. {Math.abs(parseFloat(txn.balance) || 0).toLocaleString()}
+                    Rs. {(txn.calculatedBalance || Math.abs(parseFloat(txn.balance) || 0)).toLocaleString()}
                   </td>
                   <td className="py-3 px-4 text-center">
-                    <span className={`px-2 py-1 rounded-full text-xs font-bold ${txn.drCr === 'DR' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
-                      {txn.drCr}
+                    <span className={`px-2 py-1 rounded-full text-xs font-bold ${
+                      (txn.calculatedDrCr || txn.drCr) === 'DR' ? 'bg-red-100 text-red-700' : 
+                      'bg-green-100 text-green-700'
+                    }`}>
+                      {txn.calculatedDrCr || txn.drCr || 'DR'}
                     </span>
                   </td>
                 </tr>
