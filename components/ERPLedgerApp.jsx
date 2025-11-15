@@ -162,43 +162,70 @@ export default function ERPLedgerApp() {
     });
   };
 
-  const fetchCustomerTransactions = async (customerName) => {
-    try {
-      setLoading(true);
-      setError(null);
-      
-      const encodedName = encodeURIComponent(customerName);
-      const url = `${API_URL}?method=getCustomerTransactions&customerName=${encodedName}`;
-      
-      console.log('Fetching transactions from:', url);
-      
-      const response = await fetch(url, {
-        method: 'GET',
-        mode: 'cors',
-        headers: { 'Accept': 'application/json' }
-      });
-      
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        // Filter out header rows and invalid transactions
-        const validTransactions = (data.transactions || []).filter(txn => {
-          // Skip rows that are actually headers
-          if (txn.description === 'Description' || txn.sn === 'S.N' || txn.date === 'Date') {
-            return false;
+ const fetchCustomerTransactions = async (customerName) => {
+  try {
+    setLoading(true);
+    setError(null);
+    
+    const encodedName = encodeURIComponent(customerName);
+    const url = `${API_URL}?method=getCustomerTransactions&customerName=${encodedName}`;
+    
+    console.log('Fetching transactions from:', url);
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      mode: 'cors',
+      headers: { 'Accept': 'application/json' }
+    });
+    
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    
+    const data = await response.json();
+    
+    if (data.success) {
+      // Filter out header rows and invalid transactions
+      const validTransactions = (data.transactions || []).filter(txn => {
+        // Skip rows that are actually headers
+        if (txn.description === 'Description' || txn.sn === 'S.N' || txn.date === 'Date') {
+          return false;
+        }
+        // Skip rows with NaN values in key columns (indicating header rows)
+        if (txn.item === 'NaN' || txn.rate === 'Rs. NaN' || txn.weightQty === 'NaN') {
+          return false;
+        }
+        // Skip empty or invalid rows
+        if (!txn.date || txn.date === '-' || txn.date === '') {
+          return false;
+        }
+        return true;
+      }).map((txn, index) => {
+        // Fix the column mapping based on your Google Sheets structure
+        const transactionType = txn.transactionType || txn.paymentMethod || '-';
+        const paymentMethod = txn.paymentMethod || '-';
+        
+        // Determine correct payment method based on transaction type
+        let correctedPaymentMethod = paymentMethod;
+        let correctedTransactionType = transactionType;
+        
+        // If transaction type contains payment info, extract it
+        if (transactionType.includes('Cash') || transactionType.includes('Bank') || transactionType.includes('Cheque')) {
+          correctedPaymentMethod = transactionType.includes('Cash') ? 'Cash' : 
+                                 transactionType.includes('Bank') ? 'Bank Transfer' : 
+                                 transactionType.includes('Cheque') ? 'Cheque' : '-';
+          
+          // Set transaction type to base type
+          if (transactionType.includes('Payment Received')) {
+            correctedTransactionType = 'Payment Received';
+          } else if (transactionType.includes('Payment Given')) {
+            correctedTransactionType = 'Payment Given';
+          } else if (transactionType.includes('Sale')) {
+            correctedTransactionType = 'Sale';
+          } else if (transactionType.includes('Purchase')) {
+            correctedTransactionType = 'Purchase';
           }
-          // Skip rows with NaN values in key columns (indicating header rows)
-          if (txn.item === 'NaN' || txn.rate === 'Rs. NaN' || txn.weightQty === 'NaN') {
-            return false;
-          }
-          // Skip empty or invalid rows
-          if (!txn.date || txn.date === '-' || txn.date === '') {
-            return false;
-          }
-          return true;
-        }).map((txn, index) => ({
+        }
+        
+        return {
           ...txn,
           // Ensure SN is proper number
           sn: txn.sn && !isNaN(txn.sn) ? parseInt(txn.sn) : index + 1,
@@ -206,29 +233,52 @@ export default function ERPLedgerApp() {
           debit: txn.debit ? parseFloat(txn.debit.toString().replace(/[^\d.-]/g, '')) || 0 : 0,
           credit: txn.credit ? parseFloat(txn.credit.toString().replace(/[^\d.-]/g, '')) || 0 : 0,
           balance: txn.balance ? parseFloat(txn.balance.toString().replace(/[^\d.-]/g, '')) || 0 : 0,
-          // Clean up other fields
+          // Clean up other fields with proper mapping
           weightQty: txn.weightQty && txn.weightQty !== 'NaN' ? txn.weightQty : '',
           rate: txn.rate && txn.rate !== 'Rs. NaN' ? txn.rate : '',
           item: txn.item && txn.item !== 'NaN' ? txn.item : '',
-          transactionType: txn.transactionType || '-',
-          paymentMethod: txn.paymentMethod || '-',
+          // FIXED: Proper column mapping
+          transactionType: correctedTransactionType,
+          paymentMethod: correctedPaymentMethod,
           bankName: txn.bankName || '-',
           chequeNo: txn.chequeNo || '-'
-        }));
-        
-        console.log('Filtered transactions:', validTransactions);
-        setTransactions(validTransactions);
-        setSelectedCustomer({ name: customerName, summary: data.summary });
-        return validTransactions;
-      }
-      throw new Error(data.error || 'Failed to fetch transactions');
-    } catch (err) {
-      setError('Failed to fetch transactions: ' + err.message);
-      return [];
-    } finally {
-      setLoading(false);
+        };
+      });
+      
+      console.log('Corrected transactions:', validTransactions);
+      setTransactions(validTransactions);
+      
+      // Calculate summary from transactions
+      const summary = calculateTransactionSummary(validTransactions);
+      setSelectedCustomer({ name: customerName, summary });
+      
+      return validTransactions;
     }
+    throw new Error(data.error || 'Failed to fetch transactions');
+  } catch (err) {
+    setError('Failed to fetch transactions: ' + err.message);
+    return [];
+  } finally {
+    setLoading(false);
+  }
+};
+
+// Add this helper function to calculate summary from transactions
+const calculateTransactionSummary = (transactions) => {
+  const totalDebit = transactions.reduce((sum, txn) => sum + (parseFloat(txn.debit) || 0), 0);
+  const totalCredit = transactions.reduce((sum, txn) => sum + (parseFloat(txn.credit) || 0), 0);
+  const finalBalance = totalCredit - totalDebit;
+  const finalDRCR = finalBalance >= 0 ? 'CR' : 'DR';
+  
+  return {
+    totalDebit,
+    totalCredit,
+    finalBalance: Math.abs(finalBalance),
+    finalDRCR,
+    transactionCount: transactions.length,
+    netBalance: finalBalance
   };
+};
 
   const createCustomer = async (customerData) => {
     try {
@@ -989,19 +1039,22 @@ function AddTransactionModal({ customers, selectedCustomer, onClose, onSubmit, l
             </div>
 
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">Transaction Type</label>
-              <select
-                value={formData.transactionType}
-                onChange={(e) => setFormData({ ...formData, transactionType: e.target.value })}
-                className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all"
-              >
-                <option value="Sale">Sale</option>
-                <option value="Payment Received - Cash">Payment Received - Cash</option>
-                <option value="Payment Received - Bank">Payment Received - Bank</option>
-                <option value="Payment Given - Cash">Payment Given - Cash</option>
-                <option value="Payment Given - Bank">Payment Given - Bank</option>
-              </select>
-            </div>
+  <label className="block text-sm font-semibold text-gray-700 mb-2">Transaction Type</label>
+  <select
+    value={formData.transactionType}
+    onChange={(e) => setFormData({ ...formData, transactionType: e.target.value })}
+    className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all"
+  >
+    <option value="Sale/Purchase">Sale/Purchase</option>
+    <option value="Payment Received - Cash">Payment Received - Cash</option>
+    <option value="Payment Received - Bank">Payment Received - Bank</option>
+    <option value="Payment Received - Cheque">Payment Received - Cheque</option>
+    <option value="Payment Given - Cash">Payment Given - Cash</option>
+    <option value="Payment Given - Bank">Payment Given - Bank</option>
+    <option value="Payment Given - Cheque">Payment Given - Cheque</option>
+    <option value="Opening Balance">Opening Balance</option>
+  </select>
+</div>
           </div>
 
           <div className="grid grid-cols-3 gap-4">
