@@ -125,40 +125,73 @@ export default function ERPLedgerApp() {
     }
   };
 
-  const fetchCustomerTransactions = async (customerName) => {
-    try {
-      setLoading(true);
-      setError(null);
+const fetchCustomerTransactions = async (customerName) => {
+  try {
+    setLoading(true);
+    setError(null);
+    
+    const encodedName = encodeURIComponent(customerName);
+    const url = `${API_URL}?method=getCustomerTransactions&customerName=${encodedName}`;
+    
+    console.log('Fetching transactions from:', url);
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      mode: 'cors',
+      headers: { 'Accept': 'application/json' }
+    });
+    
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    
+    const data = await response.json();
+    
+    if (data.success) {
+      // Filter out header rows and invalid transactions
+      const validTransactions = (data.transactions || []).filter(txn => {
+        // Skip rows that are actually headers
+        if (txn.description === 'Description' || txn.sn === 'S.N' || txn.date === 'Date') {
+          return false;
+        }
+        // Skip rows with NaN values in key columns (indicating header rows)
+        if (txn.item === 'NaN' || txn.rate === 'Rs. NaN' || txn.weightQty === 'NaN') {
+          return false;
+        }
+        // Skip empty or invalid rows
+        if (!txn.date || txn.date === '-' || txn.date === '') {
+          return false;
+        }
+        return true;
+      }).map((txn, index) => ({
+        ...txn,
+        // Ensure SN is proper number
+        sn: txn.sn && !isNaN(txn.sn) ? parseInt(txn.sn) : index + 1,
+        // Clean up numeric values
+        debit: txn.debit ? parseFloat(txn.debit.replace(/[^\d.-]/g, '')) || 0 : 0,
+        credit: txn.credit ? parseFloat(txn.credit.replace(/[^\d.-]/g, '')) || 0 : 0,
+        balance: txn.balance ? parseFloat(txn.balance.replace(/[^\d.-]/g, '')) || 0 : 0,
+        // Clean up other fields
+        weightQty: txn.weightQty && txn.weightQty !== 'NaN' ? txn.weightQty : '',
+        rate: txn.rate && txn.rate !== 'Rs. NaN' ? txn.rate : '',
+        item: txn.item && txn.item !== 'NaN' ? txn.item : '',
+        transactionType: txn.transactionType || '-',
+        paymentMethod: txn.paymentMethod || '-',
+        bankName: txn.bankName || '-',
+        chequeNo: txn.chequeNo || '-'
+      }));
       
-      const encodedName = encodeURIComponent(customerName);
-      const url = `${API_URL}?method=getCustomerTransactions&customerName=${encodedName}`;
-      
-      console.log('Fetching transactions from:', url);
-      
-      const response = await fetch(url, {
-        method: 'GET',
-        mode: 'cors',
-        headers: { 'Accept': 'application/json' }
-      });
-      
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        setTransactions(data.transactions || []);
-        setSelectedCustomer({ name: customerName, summary: data.summary });
-        return data.transactions;
-      }
-      throw new Error(data.error || 'Failed to fetch transactions');
-    } catch (err) {
-      setError('Failed to fetch transactions: ' + err.message);
-      return [];
-    } finally {
-      setLoading(false);
+      console.log('Filtered transactions:', validTransactions);
+      setTransactions(validTransactions);
+      setSelectedCustomer({ name: customerName, summary: data.summary });
+      return validTransactions;
     }
-  };
-
+    throw new Error(data.error || 'Failed to fetch transactions');
+  } catch (err) {
+    setError('Failed to fetch transactions: ' + err.message);
+    return [];
+  } finally {
+    setLoading(false);
+  }
+};
   const createCustomer = async (customerData) => {
     try {
       setLoading(true);
@@ -507,6 +540,11 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
     );
   }
 
+  // Debug: Log transactions to see what's coming from API
+  useEffect(() => {
+    console.log('Transactions received:', transactions);
+  }, [transactions]);
+
   // Calculate running balance properly
   const calculateRunningBalance = (transactions) => {
     let balance = 0;
@@ -516,7 +554,7 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
       
       // For opening balance, set directly
       if (txn.description?.toLowerCase().includes('opening balance')) {
-        balance = parseFloat(txn.balance) || 0;
+        balance = parseFloat(txn.balance) || debit - credit;
       } else {
         // Normal transaction: balance = previous balance + debit - credit
         balance = balance + debit - credit;
@@ -541,6 +579,9 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
           <div>
             <h2 className="text-2xl font-bold text-gray-900">{customer.name}</h2>
             <p className="text-gray-600 mt-1">Transaction Ledger</p>
+            <p className="text-sm text-gray-500 mt-1">
+              Showing {transactions.length} valid transactions
+            </p>
           </div>
           <div className="text-right">
             <p className="text-sm text-gray-600">Final Balance</p>
@@ -601,7 +642,7 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
         </div>
       </div>
 
-      {/* Fixed Transactions Table with Single Header */}
+      {/* Fixed Transactions Table */}
       <div className="bg-white rounded-xl shadow-lg overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -636,17 +677,17 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
                     {txn.weightQty ? parseFloat(txn.weightQty).toLocaleString() : '-'}
                   </td>
                   <td className="py-3 px-4 text-sm text-right font-medium">
-                    {txn.rate ? `Rs. ${parseFloat(txn.rate).toLocaleString()}` : '-'}
+                    {txn.rate ? txn.rate : '-'}
                   </td>
                   <td className="py-3 px-4 text-sm">{txn.transactionType || '-'}</td>
                   <td className="py-3 px-4 text-sm">{txn.paymentMethod || '-'}</td>
                   <td className="py-3 px-4 text-sm">{txn.bankName || '-'}</td>
                   <td className="py-3 px-4 text-sm">{txn.chequeNo || '-'}</td>
                   <td className="py-3 px-4 text-sm text-right font-semibold text-red-600">
-                    {txn.debit ? `Rs. ${parseFloat(txn.debit).toLocaleString()}` : '-'}
+                    {txn.debit && txn.debit !== 0 ? `Rs. ${parseFloat(txn.debit).toLocaleString()}` : '-'}
                   </td>
                   <td className="py-3 px-4 text-sm text-right font-semibold text-green-600">
-                    {txn.credit ? `Rs. ${parseFloat(txn.credit).toLocaleString()}` : '-'}
+                    {txn.credit && txn.credit !== 0 ? `Rs. ${parseFloat(txn.credit).toLocaleString()}` : '-'}
                   </td>
                   <td className="py-3 px-4 text-sm text-right font-bold">
                     Rs. {(txn.calculatedBalance || Math.abs(parseFloat(txn.balance) || 0)).toLocaleString()}
@@ -669,6 +710,9 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
           <div className="text-center py-12">
             <AlertCircle className="w-16 h-16 text-gray-300 mx-auto mb-4" />
             <p className="text-gray-500 text-lg">No transactions found</p>
+            <p className="text-sm text-gray-400 mt-2">
+              Check browser console for debugging information
+            </p>
           </div>
         )}
       </div>
