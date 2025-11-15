@@ -559,6 +559,11 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
                 <th className="py-3 px-4 text-left text-sm font-semibold">Date</th>
                 <th className="py-3 px-4 text-left text-sm font-semibold">Description</th>
                 <th className="py-3 px-4 text-left text-sm font-semibold">Item</th>
+                <th className="py-3 px-4 text-right text-sm font-semibold">Weight/Qty</th>
+                <th className="py-3 px-4 text-right text-sm font-semibold">Rate</th>
+                <th className="py-3 px-4 text-left text-sm font-semibold">Payment Method</th>
+                <th className="py-3 px-4 text-left text-sm font-semibold">Bank Name</th>
+                <th className="py-3 px-4 text-left text-sm font-semibold">Cheque No</th>
                 <th className="py-3 px-4 text-right text-sm font-semibold">Debit</th>
                 <th className="py-3 px-4 text-right text-sm font-semibold">Credit</th>
                 <th className="py-3 px-4 text-right text-sm font-semibold">Balance</th>
@@ -572,6 +577,15 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
                   <td className="py-3 px-4 text-sm">{txn.date instanceof Date ? txn.date.toLocaleDateString() : txn.date}</td>
                   <td className="py-3 px-4 text-sm">{txn.description}</td>
                   <td className="py-3 px-4 text-sm">{txn.item}</td>
+                  <td className="py-3 px-4 text-sm text-right font-medium">
+                    {txn.weightQty ? parseFloat(txn.weightQty).toLocaleString() : '-'}
+                  </td>
+                  <td className="py-3 px-4 text-sm text-right font-medium">
+                    {txn.rate ? `Rs. ${parseFloat(txn.rate).toLocaleString()}` : '-'}
+                  </td>
+                  <td className="py-3 px-4 text-sm">{txn.paymentMethod || '-'}</td>
+                  <td className="py-3 px-4 text-sm">{txn.bankName || '-'}</td>
+                  <td className="py-3 px-4 text-sm">{txn.chequeNo || '-'}</td>
                   <td className="py-3 px-4 text-sm text-right font-semibold text-red-600">
                     {txn.debit ? `Rs. ${parseFloat(txn.debit).toLocaleString()}` : '-'}
                   </td>
