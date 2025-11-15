@@ -357,7 +357,7 @@ export default function ERPLedgerApp() {
           />
         )}
         {activeTab === 'transactions' && (
-          <TransactionsView
+          <
             customer={selectedCustomer}
             transactions={transactions}
             onAddTransaction={() => setShowAddTransaction(true)}
@@ -543,68 +543,71 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
       </div>
 
       <div className="bg-white rounded-xl shadow-lg overflow-hidden">
-  <div className="overflow-x-auto">
-    <table className="w-full">
-      <thead className="bg-gradient-to-r from-blue-500 to-purple-500 text-white">
-        <tr>
-          <th className="py-3 px-4 text-left text-sm font-semibold">S.N</th>
-          <th className="py-3 px-4 text-left text-sm font-semibold">Date</th>
-          <th className="py-3 px-4 text-left text-sm font-semibold">Description</th>
-          <th className="py-3 px-4 text-left text-sm font-semibold">Item</th>
-          <th className="py-3 px-4 text-right text-sm font-semibold">Weight/Qty</th>
-          <th className="py-3 px-4 text-right text-sm font-semibold">Rate</th>
-          <th className="py-3 px-4 text-left text-sm font-semibold">Payment Method</th>
-          <th className="py-3 px-4 text-left text-sm font-semibold">Bank Name</th>
-          <th className="py-3 px-4 text-left text-sm font-semibold">Cheque No</th>
-          <th className="py-3 px-4 text-right text-sm font-semibold">Debit</th>
-          <th className="py-3 px-4 text-right text-sm font-semibold">Credit</th>
-          <th className="py-3 px-4 text-right text-sm font-semibold">Balance</th>
-          <th className="py-3 px-4 text-center text-sm font-semibold">DR/CR</th>
-        </tr>
-      </thead>
-      <tbody>
-        {transactions.map((txn, index) => (
-          <tr key={index} className="border-b border-gray-100 hover:bg-gray-50">
-            <td className="py-3 px-4 text-sm">{txn.sn || index + 1}</td>
-            <td className="py-3 px-4 text-sm">{txn.date instanceof Date ? txn.date.toLocaleDateString() : txn.date}</td>
-            <td className="py-3 px-4 text-sm">{txn.description}</td>
-            <td className="py-3 px-4 text-sm">{txn.item}</td>
-            <td className="py-3 px-4 text-sm text-right">
-              {txn.weightQty || '-'}
-            </td>
-            <td className="py-3 px-4 text-sm text-right">
-              {txn.rate ? `Rs. ${parseFloat(txn.rate).toLocaleString()}` : '-'}
-            </td>
-            <td className="py-3 px-4 text-sm">{txn.paymentMethod || '-'}</td>
-            <td className="py-3 px-4 text-sm">{txn.bankName || '-'}</td>
-            <td className="py-3 px-4 text-sm">{txn.chequeNo || '-'}</td>
-            <td className="py-3 px-4 text-sm text-right font-semibold text-red-600">
-              {txn.debit ? `Rs. ${parseFloat(txn.debit).toLocaleString()}` : '-'}
-            </td>
-            <td className="py-3 px-4 text-sm text-right font-semibold text-green-600">
-              {txn.credit ? `Rs. ${parseFloat(txn.credit).toLocaleString()}` : '-'}
-            </td>
-            <td className="py-3 px-4 text-sm text-right font-bold">
-              Rs. {Math.abs(parseFloat(txn.balance) || 0).toLocaleString()}
-            </td>
-            <td className="py-3 px-4 text-center">
-              <span className={`px-2 py-1 rounded-full text-xs font-bold ${txn.drCr === 'DR' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
-                {txn.drCr}
-              </span>
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  </div>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-gradient-to-r from-blue-500 to-purple-500 text-white">
+              <tr>
+                <th className="py-3 px-4 text-left text-sm font-semibold">S.N</th>
+                <th className="py-3 px-4 text-left text-sm font-semibold">Date</th>
+                <th className="py-3 px-4 text-left text-sm font-semibold">Description</th>
+                <th className="py-3 px-4 text-left text-sm font-semibold">Item</th>
+                <th className="py-3 px-4 text-right text-sm font-semibold">Weight/Qty</th>
+                <th className="py-3 px-4 text-right text-sm font-semibold">Rate</th>
+                <th className="py-3 px-4 text-left text-sm font-semibold">Payment Method</th>
+                <th className="py-3 px-4 text-left text-sm font-semibold">Bank Name</th>
+                <th className="py-3 px-4 text-left text-sm font-semibold">Cheque No</th>
+                <th className="py-3 px-4 text-right text-sm font-semibold">Debit</th>
+                <th className="py-3 px-4 text-right text-sm font-semibold">Credit</th>
+                <th className="py-3 px-4 text-right text-sm font-semibold">Balance</th>
+                <th className="py-3 px-4 text-center text-sm font-semibold">DR/CR</th>
+              </tr>
+            </thead>
+            <tbody>
+              {transactions.map((txn, index) => (
+                <tr key={index} className="border-b border-gray-100 hover:bg-gray-50">
+                  <td className="py-3 px-4 text-sm">{txn.sn || index + 1}</td>
+                  <td className="py-3 px-4 text-sm">{txn.date instanceof Date ? txn.date.toLocaleDateString() : txn.date}</td>
+                  <td className="py-3 px-4 text-sm">{txn.description}</td>
+                  <td className="py-3 px-4 text-sm">{txn.item}</td>
+                  <td className="py-3 px-4 text-sm text-right">
+                    {txn.weightQty || '-'}
+                  </td>
+                  <td className="py-3 px-4 text-sm text-right">
+                    {txn.rate ? `Rs. ${parseFloat(txn.rate).toLocaleString()}` : '-'}
+                  </td>
+                  <td className="py-3 px-4 text-sm">{txn.paymentMethod || '-'}</td>
+                  <td className="py-3 px-4 text-sm">{txn.bankName || '-'}</td>
+                  <td className="py-3 px-4 text-sm">{txn.chequeNo || '-'}</td>
+                  <td className="py-3 px-4 text-sm text-right font-semibold text-red-600">
+                    {txn.debit ? `Rs. ${parseFloat(txn.debit).toLocaleString()}` : '-'}
+                  </td>
+                  <td className="py-3 px-4 text-sm text-right font-semibold text-green-600">
+                    {txn.credit ? `Rs. ${parseFloat(txn.credit).toLocaleString()}` : '-'}
+                  </td>
+                  <td className="py-3 px-4 text-sm text-right font-bold">
+                    Rs. {Math.abs(parseFloat(txn.balance) || 0).toLocaleString()}
+                  </td>
+                  <td className="py-3 px-4 text-center">
+                    <span className={`px-2 py-1 rounded-full text-xs font-bold ${txn.drCr === 'DR' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                      {txn.drCr}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
 
-  {transactions.length === 0 && (
-    <div className="text-center py-12">
-      <AlertCircle className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-      <p className="text-gray-500 text-lg">No transactions found</p>
+        {transactions.length === 0 && (
+          <div className="text-center py-12">
+            <AlertCircle className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+            <p className="text-gray-500 text-lg">No transactions found</p>
+          </div>
+        )}
+      </div>
     </div>
-  )}
-</div>
+  );
+} // <-- This closing brace was missing
 
 function BalanceSheetView({ balanceSheet, onViewCustomer }) {
   return (
