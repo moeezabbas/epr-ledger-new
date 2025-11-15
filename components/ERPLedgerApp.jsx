@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { AlertCircle, RefreshCw, Users, TrendingUp, TrendingDown, DollarSign, Search, Plus, Eye, X } from 'lucide-react';
 
 // API Configuration
@@ -20,6 +20,20 @@ export default function ERPLedgerApp() {
   const [lastSync, setLastSync] = useState(null);
   const [showAddCustomer, setShowAddCustomer] = useState(false);
   const [showAddTransaction, setShowAddTransaction] = useState(false);
+
+  // Wrap refreshAllData in useCallback to avoid useEffect dependencies
+  const refreshAllData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      await Promise.all([fetchCustomers(), fetchBalanceSheet(), fetchSummary()]);
+      setLastSync(new Date());
+    } catch (err) {
+      setError('Failed to refresh data');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   const fetchCustomers = async () => {
     try {
@@ -121,77 +135,101 @@ export default function ERPLedgerApp() {
       throw new Error(data.error || 'Failed to fetch summary');
     } catch (err) {
       console.error('Summary error:', err);
+      // Calculate summary locally if API fails
+      calculateLocalSummary();
       return null;
     }
   };
 
-const fetchCustomerTransactions = async (customerName) => {
-  try {
-    setLoading(true);
-    setError(null);
+  // Calculate DR/CR summary locally as fallback
+  const calculateLocalSummary = () => {
+    const totalDr = balanceSheet
+      .filter(item => item.drCr === 'DR')
+      .reduce((sum, item) => sum + (Math.abs(item.balance) || 0), 0);
     
-    const encodedName = encodeURIComponent(customerName);
-    const url = `${API_URL}?method=getCustomerTransactions&customerName=${encodedName}`;
+    const totalCr = balanceSheet
+      .filter(item => item.drCr === 'CR')
+      .reduce((sum, item) => sum + (Math.abs(item.balance) || 0), 0);
     
-    console.log('Fetching transactions from:', url);
+    const netPosition = totalDr - totalCr;
+    const status = netPosition > 0 ? 'NET DR' : netPosition < 0 ? 'NET CR' : 'BALANCED';
     
-    const response = await fetch(url, {
-      method: 'GET',
-      mode: 'cors',
-      headers: { 'Accept': 'application/json' }
+    setSummary({
+      totalDr,
+      totalCr,
+      netPosition: Math.abs(netPosition),
+      status
     });
-    
-    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-    
-    const data = await response.json();
-    
-    if (data.success) {
-      // Filter out header rows and invalid transactions
-      const validTransactions = (data.transactions || []).filter(txn => {
-        // Skip rows that are actually headers
-        if (txn.description === 'Description' || txn.sn === 'S.N' || txn.date === 'Date') {
-          return false;
-        }
-        // Skip rows with NaN values in key columns (indicating header rows)
-        if (txn.item === 'NaN' || txn.rate === 'Rs. NaN' || txn.weightQty === 'NaN') {
-          return false;
-        }
-        // Skip empty or invalid rows
-        if (!txn.date || txn.date === '-' || txn.date === '') {
-          return false;
-        }
-        return true;
-      }).map((txn, index) => ({
-        ...txn,
-        // Ensure SN is proper number
-        sn: txn.sn && !isNaN(txn.sn) ? parseInt(txn.sn) : index + 1,
-        // Clean up numeric values
-        debit: txn.debit ? parseFloat(txn.debit.replace(/[^\d.-]/g, '')) || 0 : 0,
-        credit: txn.credit ? parseFloat(txn.credit.replace(/[^\d.-]/g, '')) || 0 : 0,
-        balance: txn.balance ? parseFloat(txn.balance.replace(/[^\d.-]/g, '')) || 0 : 0,
-        // Clean up other fields
-        weightQty: txn.weightQty && txn.weightQty !== 'NaN' ? txn.weightQty : '',
-        rate: txn.rate && txn.rate !== 'Rs. NaN' ? txn.rate : '',
-        item: txn.item && txn.item !== 'NaN' ? txn.item : '',
-        transactionType: txn.transactionType || '-',
-        paymentMethod: txn.paymentMethod || '-',
-        bankName: txn.bankName || '-',
-        chequeNo: txn.chequeNo || '-'
-      }));
+  };
+
+  const fetchCustomerTransactions = async (customerName) => {
+    try {
+      setLoading(true);
+      setError(null);
       
-      console.log('Filtered transactions:', validTransactions);
-      setTransactions(validTransactions);
-      setSelectedCustomer({ name: customerName, summary: data.summary });
-      return validTransactions;
+      const encodedName = encodeURIComponent(customerName);
+      const url = `${API_URL}?method=getCustomerTransactions&customerName=${encodedName}`;
+      
+      console.log('Fetching transactions from:', url);
+      
+      const response = await fetch(url, {
+        method: 'GET',
+        mode: 'cors',
+        headers: { 'Accept': 'application/json' }
+      });
+      
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        // Filter out header rows and invalid transactions
+        const validTransactions = (data.transactions || []).filter(txn => {
+          // Skip rows that are actually headers
+          if (txn.description === 'Description' || txn.sn === 'S.N' || txn.date === 'Date') {
+            return false;
+          }
+          // Skip rows with NaN values in key columns (indicating header rows)
+          if (txn.item === 'NaN' || txn.rate === 'Rs. NaN' || txn.weightQty === 'NaN') {
+            return false;
+          }
+          // Skip empty or invalid rows
+          if (!txn.date || txn.date === '-' || txn.date === '') {
+            return false;
+          }
+          return true;
+        }).map((txn, index) => ({
+          ...txn,
+          // Ensure SN is proper number
+          sn: txn.sn && !isNaN(txn.sn) ? parseInt(txn.sn) : index + 1,
+          // Clean up numeric values
+          debit: txn.debit ? parseFloat(txn.debit.toString().replace(/[^\d.-]/g, '')) || 0 : 0,
+          credit: txn.credit ? parseFloat(txn.credit.toString().replace(/[^\d.-]/g, '')) || 0 : 0,
+          balance: txn.balance ? parseFloat(txn.balance.toString().replace(/[^\d.-]/g, '')) || 0 : 0,
+          // Clean up other fields
+          weightQty: txn.weightQty && txn.weightQty !== 'NaN' ? txn.weightQty : '',
+          rate: txn.rate && txn.rate !== 'Rs. NaN' ? txn.rate : '',
+          item: txn.item && txn.item !== 'NaN' ? txn.item : '',
+          transactionType: txn.transactionType || '-',
+          paymentMethod: txn.paymentMethod || '-',
+          bankName: txn.bankName || '-',
+          chequeNo: txn.chequeNo || '-'
+        }));
+        
+        console.log('Filtered transactions:', validTransactions);
+        setTransactions(validTransactions);
+        setSelectedCustomer({ name: customerName, summary: data.summary });
+        return validTransactions;
+      }
+      throw new Error(data.error || 'Failed to fetch transactions');
+    } catch (err) {
+      setError('Failed to fetch transactions: ' + err.message);
+      return [];
+    } finally {
+      setLoading(false);
     }
-    throw new Error(data.error || 'Failed to fetch transactions');
-  } catch (err) {
-    setError('Failed to fetch transactions: ' + err.message);
-    return [];
-  } finally {
-    setLoading(false);
-  }
-};
+  };
+
   const createCustomer = async (customerData) => {
     try {
       setLoading(true);
@@ -228,11 +266,25 @@ const fetchCustomerTransactions = async (customerName) => {
   const createTransaction = async (transactionData) => {
     try {
       setLoading(true);
-      const params = new URLSearchParams({
+      
+      // Prepare transaction data for API
+      const apiData = {
         method: 'createTransaction',
-        ...transactionData
-      });
+        customerName: transactionData.customerName,
+        date: transactionData.date,
+        description: transactionData.description,
+        item: transactionData.item,
+        weightQty: transactionData.weightQty,
+        rate: transactionData.rate,
+        transactionType: transactionData.transactionType,
+        paymentMethod: transactionData.paymentMethod,
+        bankName: transactionData.bankName,
+        chequeNo: transactionData.chequeNo,
+        amount: transactionData.amount,
+        drCr: transactionData.drCr
+      };
 
+      const params = new URLSearchParams(apiData);
       const response = await fetch(`${API_URL}?${params.toString()}`, {
         method: 'GET',
         mode: 'cors',
@@ -259,26 +311,15 @@ const fetchCustomerTransactions = async (customerName) => {
     }
   };
 
-  const refreshAllData = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      await Promise.all([fetchCustomers(), fetchBalanceSheet(), fetchSummary()]);
-      setLastSync(new Date());
-    } catch (err) {
-      setError('Failed to refresh data');
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  // Auto-refresh effect
   useEffect(() => {
     if (autoRefresh) {
       const interval = setInterval(refreshAllData, 30000);
       return () => clearInterval(interval);
     }
-  }, [autoRefresh]);
+  }, [autoRefresh, refreshAllData]);
 
+  // Initial data load effect
   useEffect(() => {
     const loadInitialData = async () => {
       setLoading(true);
@@ -306,7 +347,7 @@ const fetchCustomerTransactions = async (customerName) => {
     };
     
     loadInitialData();
-  }, []);
+  }, [refreshAllData]);
 
   const filteredCustomers = customers.filter(c =>
     c.name.toLowerCase().includes(searchTerm.toLowerCase())
@@ -539,11 +580,6 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
       </div>
     );
   }
-
-  // Debug: Log transactions to see what's coming from API
-  useEffect(() => {
-    console.log('Transactions received:', transactions);
-  }, [transactions]);
 
   // Calculate running balance properly
   const calculateRunningBalance = (transactions) => {
