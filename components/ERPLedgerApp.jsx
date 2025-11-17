@@ -74,7 +74,7 @@ export default function ERPLedgerApp() {
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [searchTerm, setSearchTerm] = useState('');
-  const [autoRefresh, setAutoRefresh] = useState(false); // Off by default for performance
+  const [autoRefresh, setAutoRefresh] = useState(false);
   const [lastSync, setLastSync] = useLocalStorage(LOCAL_STORAGE_KEYS.LAST_SYNC, null);
   const [showAddCustomer, setShowAddCustomer] = useState(false);
   const [showAddTransaction, setShowAddTransaction] = useState(false);
@@ -514,10 +514,20 @@ export default function ERPLedgerApp() {
     reader.readAsText(file);
   }, [setCustomers, setBalanceSheet, setSummary]);
 
+  // FIXED: Tab switching function
+  const handleTabChange = useCallback((tab) => {
+    console.log('Changing tab to:', tab);
+    setActiveTab(tab);
+    setMobileMenuOpen(false);
+    
+    // Clear any errors when switching tabs
+    setError(null);
+  }, []);
+
   // Effects
   useEffect(() => {
     if (autoRefresh && !offlineMode) {
-      const interval = setInterval(refreshAllData, 60000); // 1 minute for better performance
+      const interval = setInterval(refreshAllData, 60000);
       return () => clearInterval(interval);
     }
   }, [autoRefresh, offlineMode, refreshAllData]);
@@ -545,7 +555,90 @@ export default function ERPLedgerApp() {
   }, [offlineMode, refreshAllData, calculateSummaryFromBalanceSheet, setOfflineMode]);
 
   // Mobile responsive breakpoint
-  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    
+    return () => {
+      window.removeEventListener('resize', checkMobile);
+    };
+  }, []);
+
+  // Render current tab content
+  const renderTabContent = () => {
+    console.log('Rendering tab:', activeTab);
+    
+    switch (activeTab) {
+      case 'dashboard':
+        return (
+          <DashboardView 
+            summary={summary} 
+            customers={customers} 
+            balanceSheet={balanceSheet}
+            topCustomers={topCustomers}
+            isMobile={isMobile}
+          />
+        );
+      case 'customers':
+        return (
+          <CustomersView
+            customers={filteredCustomers}
+            searchTerm={searchTerm}
+            setSearchTerm={setSearchTerm}
+            onAddCustomer={() => setShowAddCustomer(true)}
+            onViewCustomer={(name) => { 
+              fetchCustomerTransactions(name); 
+              handleTabChange('transactions');
+            }}
+            onDeleteCustomer={deleteCustomer}
+            offlineMode={offlineMode}
+            isMobile={isMobile}
+          />
+        );
+      case 'transactions':
+        return (
+          <TransactionsView
+            customer={selectedCustomer}
+            transactions={transactions}
+            onAddTransaction={() => setShowAddTransaction(true)}
+            onBack={() => {
+              setSelectedCustomer(null);
+              handleTabChange('customers');
+            }}
+            onDeleteTransaction={deleteTransaction}
+            offlineMode={offlineMode}
+            isMobile={isMobile}
+          />
+        );
+      case 'balance-sheet':
+        return (
+          <BalanceSheetView
+            balanceSheet={balanceSheet}
+            onViewCustomer={(name) => { 
+              fetchCustomerTransactions(name); 
+              handleTabChange('transactions');
+            }}
+            isMobile={isMobile}
+          />
+        );
+      default:
+        return (
+          <DashboardView 
+            summary={summary} 
+            customers={customers} 
+            balanceSheet={balanceSheet}
+            topCustomers={topCustomers}
+            isMobile={isMobile}
+          />
+        );
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -556,7 +649,7 @@ export default function ERPLedgerApp() {
             <div className="flex items-center gap-3">
               {isMobile && activeTab !== 'dashboard' && (
                 <button
-                  onClick={() => setActiveTab('dashboard')}
+                  onClick={() => handleTabChange('dashboard')}
                   className="p-2 text-gray-600 hover:text-gray-900"
                 >
                   <ChevronLeft className="w-5 h-5" />
@@ -642,10 +735,7 @@ export default function ERPLedgerApp() {
             {['dashboard', 'customers', 'transactions', 'balance-sheet'].map(tab => (
               <button
                 key={tab}
-                onClick={() => {
-                  setActiveTab(tab);
-                  setMobileMenuOpen(false);
-                }}
+                onClick={() => handleTabChange(tab)}
                 className={`px-3 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${
                   activeTab === tab 
                     ? 'bg-blue-500 text-white shadow-sm' 
@@ -728,54 +818,7 @@ export default function ERPLedgerApp() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6 py-4">
-        {activeTab === 'dashboard' && (
-          <DashboardView 
-            summary={summary} 
-            customers={customers} 
-            balanceSheet={balanceSheet}
-            topCustomers={topCustomers}
-            isMobile={isMobile}
-          />
-        )}
-        {activeTab === 'customers' && (
-          <CustomersView
-            customers={filteredCustomers}
-            searchTerm={searchTerm}
-            setSearchTerm={setSearchTerm}
-            onAddCustomer={() => setShowAddCustomer(true)}
-            onViewCustomer={(name) => { 
-              fetchCustomerTransactions(name); 
-              setActiveTab('transactions'); 
-            }}
-            onDeleteCustomer={deleteCustomer}
-            offlineMode={offlineMode}
-            isMobile={isMobile}
-          />
-        )}
-        {activeTab === 'transactions' && (
-          <TransactionsView
-            customer={selectedCustomer}
-            transactions={transactions}
-            onAddTransaction={() => setShowAddTransaction(true)}
-            onBack={() => {
-              setSelectedCustomer(null);
-              setActiveTab('customers');
-            }}
-            onDeleteTransaction={deleteTransaction}
-            offlineMode={offlineMode}
-            isMobile={isMobile}
-          />
-        )}
-        {activeTab === 'balance-sheet' && (
-          <BalanceSheetView
-            balanceSheet={balanceSheet}
-            onViewCustomer={(name) => { 
-              fetchCustomerTransactions(name); 
-              setActiveTab('transactions'); 
-            }}
-            isMobile={isMobile}
-          />
-        )}
+        {renderTabContent()}
       </main>
 
       {/* Modals */}
@@ -801,7 +844,7 @@ export default function ERPLedgerApp() {
   );
 }
 
-// Dashboard Component
+// Dashboard Component - Keep the same as before
 function DashboardView({ summary, customers, balanceSheet, topCustomers, isMobile }) {
   const stats = useMemo(() => [
     { 
@@ -900,7 +943,7 @@ function DashboardView({ summary, customers, balanceSheet, topCustomers, isMobil
   );
 }
 
-// Customers Component
+// Customers Component - Keep the same as before
 function CustomersView({ customers, searchTerm, setSearchTerm, onAddCustomer, onViewCustomer, onDeleteCustomer, offlineMode, isMobile }) {
   const [deleting, setDeleting] = useState(null);
 
@@ -1000,7 +1043,7 @@ function CustomersView({ customers, searchTerm, setSearchTerm, onAddCustomer, on
   );
 }
 
-// Transactions Component
+// Transactions Component - Keep the same as before
 function TransactionsView({ customer, transactions, onAddTransaction, onBack, onDeleteTransaction, offlineMode, isMobile }) {
   const [deleting, setDeleting] = useState(null);
 
@@ -1230,7 +1273,7 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack, on
   );
 }
 
-// Balance Sheet Component
+// Balance Sheet Component - Keep the same as before
 function BalanceSheetView({ balanceSheet, onViewCustomer, isMobile }) {
   return (
     <div className="space-y-4">
@@ -1328,7 +1371,7 @@ function BalanceSheetView({ balanceSheet, onViewCustomer, isMobile }) {
   );
 }
 
-// Add Customer Modal
+// Add Customer Modal - Keep the same as before
 function AddCustomerModal({ onClose, onSubmit, loading, isMobile }) {
   const [formData, setFormData] = useState({ 
     name: '', 
@@ -1418,7 +1461,7 @@ function AddCustomerModal({ onClose, onSubmit, loading, isMobile }) {
   );
 }
 
-// Add Transaction Modal
+// Add Transaction Modal - Keep the same as before
 function AddTransactionModal({ customers, selectedCustomer, onClose, onSubmit, loading, isMobile }) {
   const [formData, setFormData] = useState({
     customerName: selectedCustomer || '',
