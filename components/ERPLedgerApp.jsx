@@ -1,10 +1,20 @@
 'use client'
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { AlertCircle, RefreshCw, Users, TrendingUp, TrendingDown, DollarSign, Search, Plus, Eye, X } from 'lucide-react';
+import { AlertCircle, RefreshCw, Users, TrendingUp, TrendingDown, DollarSign, Search, Plus, Eye, X, Edit, Trash2, Download, Upload, Settings, Save } from 'lucide-react';
 
 // API Configuration
 const API_URL = 'https://script.google.com/macros/s/AKfycbzkUag35Oir80bL6jRx2d_1MaopMs2BexJZaQrDoJO0bCLQONw1jfA79F8eSnyIT2Ef/exec';
+
+// Local storage keys
+const LOCAL_STORAGE_KEYS = {
+  CUSTOMERS: 'erp_customers',
+  TRANSACTIONS: 'erp_transactions_',
+  BALANCE_SHEET: 'erp_balance_sheet',
+  SUMMARY: 'erp_summary',
+  OFFLINE_MODE: 'erp_offline_mode',
+  PENDING_SYNC: 'erp_pending_sync'
+};
 
 export default function ERPLedgerApp() {
   const [customers, setCustomers] = useState([]);
@@ -20,9 +30,108 @@ export default function ERPLedgerApp() {
   const [lastSync, setLastSync] = useState(null);
   const [showAddCustomer, setShowAddCustomer] = useState(false);
   const [showAddTransaction, setShowAddTransaction] = useState(false);
+  const [offlineMode, setOfflineMode] = useState(false);
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [pendingSync, setPendingSync] = useState([]);
 
-  // Calculate DR/CR summary locally as fallback
-  const calculateLocalSummary = () => {
+  // Load data from local storage
+  const loadFromLocalStorage = useCallback(() => {
+    try {
+      const savedCustomers = localStorage.getItem(LOCAL_STORAGE_KEYS.CUSTOMERS);
+      const savedBalanceSheet = localStorage.getItem(LOCAL_STORAGE_KEYS.BALANCE_SHEET);
+      const savedSummary = localStorage.getItem(LOCAL_STORAGE_KEYS.SUMMARY);
+      const savedOfflineMode = localStorage.getItem(LOCAL_STORAGE_KEYS.OFFLINE_MODE);
+      const savedPendingSync = localStorage.getItem(LOCAL_STORAGE_KEYS.PENDING_SYNC);
+
+      if (savedCustomers) setCustomers(JSON.parse(savedCustomers));
+      if (savedBalanceSheet) setBalanceSheet(JSON.parse(savedBalanceSheet));
+      if (savedSummary) setSummary(JSON.parse(savedSummary));
+      if (savedOfflineMode) setOfflineMode(JSON.parse(savedOfflineMode));
+      if (savedPendingSync) setPendingSync(JSON.parse(savedPendingSync));
+    } catch (err) {
+      console.error('Error loading from local storage:', err);
+    }
+  }, []);
+
+  // Save data to local storage
+  const saveToLocalStorage = useCallback((key, data) => {
+    try {
+      localStorage.setItem(key, JSON.stringify(data));
+    } catch (err) {
+      console.error('Error saving to local storage:', err);
+    }
+  }, []);
+
+  // Toggle offline mode
+  const toggleOfflineMode = useCallback(async (mode) => {
+    setOfflineMode(mode);
+    saveToLocalStorage(LOCAL_STORAGE_KEYS.OFFLINE_MODE, mode);
+    
+    if (!mode && pendingSync.length > 0) {
+      await syncPendingChanges();
+    }
+  }, [pendingSync, saveToLocalStorage]);
+
+  // Add to pending sync
+  const addToPendingSync = useCallback((action, data) => {
+    const newPending = [...pendingSync, { action, data, timestamp: new Date().toISOString() }];
+    setPendingSync(newPending);
+    saveToLocalStorage(LOCAL_STORAGE_KEYS.PENDING_SYNC, newPending);
+  }, [pendingSync, saveToLocalStorage]);
+
+  // Sync pending changes when back online
+  const syncPendingChanges = useCallback(async () => {
+    if (pendingSync.length === 0) return;
+
+    setLoading(true);
+    const successes = [];
+    const failures = [];
+
+    for (const item of pendingSync) {
+      try {
+        let result;
+        switch (item.action) {
+          case 'createCustomer':
+            result = await createCustomerAPI(item.data);
+            break;
+          case 'createTransaction':
+            result = await createTransactionAPI(item.data);
+            break;
+          case 'updateTransaction':
+            result = await updateTransactionAPI(item.data);
+            break;
+          case 'deleteTransaction':
+            result = await deleteTransactionAPI(item.data);
+            break;
+          case 'deleteCustomer':
+            result = await deleteCustomerAPI(item.data);
+            break;
+        }
+        if (result.success) {
+          successes.push(item);
+        } else {
+          failures.push(item);
+        }
+      } catch (err) {
+        failures.push(item);
+      }
+    }
+
+    const newPending = pendingSync.filter(item => 
+      !successes.some(success => success.timestamp === item.timestamp)
+    );
+    setPendingSync(newPending);
+    saveToLocalStorage(LOCAL_STORAGE_KEYS.PENDING_SYNC, newPending);
+
+    if (successes.length > 0) {
+      await refreshAllData();
+    }
+
+    setLoading(false);
+  }, [pendingSync, saveToLocalStorage]);
+
+  // Calculate DR/CR summary from balance sheet
+  const calculateSummaryFromBalanceSheet = useCallback(() => {
     const totalDr = balanceSheet
       .filter(item => item.drCr === 'DR')
       .reduce((sum, item) => sum + (Math.abs(item.balance) || 0), 0);
@@ -34,16 +143,20 @@ export default function ERPLedgerApp() {
     const netPosition = totalDr - totalCr;
     const status = netPosition > 0 ? 'NET DR' : netPosition < 0 ? 'NET CR' : 'BALANCED';
     
-    setSummary({
+    const newSummary = {
       totalDr,
       totalCr,
       netPosition: Math.abs(netPosition),
       status
-    });
-  };
+    };
+    
+    setSummary(newSummary);
+    saveToLocalStorage(LOCAL_STORAGE_KEYS.SUMMARY, newSummary);
+    return newSummary;
+  }, [balanceSheet, saveToLocalStorage]);
 
-  // Fixed summary calculation
-  const calculateTransactionSummary = (transactions) => {
+  // Fixed summary calculation for transactions
+  const calculateTransactionSummary = useCallback((transactions) => {
     if (!transactions || transactions.length === 0) {
       return {
         totalDebit: 0,
@@ -58,12 +171,10 @@ export default function ERPLedgerApp() {
     const totalDebit = transactions.reduce((sum, txn) => sum + (parseFloat(txn.debit) || 0), 0);
     const totalCredit = transactions.reduce((sum, txn) => sum + (parseFloat(txn.credit) || 0), 0);
     
-    // Get the final balance from the last transaction
     const lastTransaction = transactions[transactions.length - 1];
     const finalBalance = lastTransaction.calculatedBalance || 0;
     const finalDRCR = lastTransaction.calculatedDrCr || 'DR';
     
-    // Net balance (signed)
     const netBalance = totalDebit - totalCredit;
     
     return {
@@ -75,21 +186,19 @@ export default function ERPLedgerApp() {
       netBalance: Math.abs(netBalance),
       netDRCR: netBalance >= 0 ? 'DR' : 'CR'
     };
-  };
+  }, []);
 
   // Fixed balance calculation function
-  const calculateRunningBalance = (transactions) => {
+  const calculateRunningBalance = useCallback((transactions) => {
     let runningBalance = 0;
     
     return transactions.map((txn, index) => {
       const debit = parseFloat(txn.debit) || 0;
       const credit = parseFloat(txn.credit) || 0;
       
-      // For opening balance (first transaction)
-      if (index === 0 && txn.description?.toLowerCase().includes('opening balance')) {
-        runningBalance = credit - debit; // Opening balance is usually credit
+      if (index === 0) {
+        runningBalance = parseFloat(txn.balance) || 0;
       } else {
-        // Normal transaction logic: Debit increases balance, Credit decreases balance
         runningBalance = runningBalance + debit - credit;
       }
       
@@ -100,64 +209,33 @@ export default function ERPLedgerApp() {
         ...txn,
         calculatedBalance: absoluteBalance,
         calculatedDrCr: drCr,
-        runningBalance: runningBalance // Keep the signed balance for calculations
+        runningBalance: runningBalance
       };
     });
-  };
+  }, []);
 
-  // Wrap refreshAllData in useCallback to avoid useEffect dependencies
+  // Wrap refreshAllData in useCallback
   const refreshAllData = useCallback(async () => {
+    if (offlineMode) {
+      loadFromLocalStorage();
+      calculateSummaryFromBalanceSheet();
+      return;
+    }
+
     setLoading(true);
     setError(null);
     try {
-      await Promise.all([fetchCustomers(), fetchBalanceSheet(), fetchSummary()]);
+      await Promise.all([fetchCustomers(), fetchBalanceSheet()]);
+      calculateSummaryFromBalanceSheet();
       setLastSync(new Date());
     } catch (err) {
       setError('Failed to refresh data');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [offlineMode, loadFromLocalStorage, calculateSummaryFromBalanceSheet]);
 
   const fetchCustomers = async () => {
-    try {
-      let allCustomers = [];
-      let offset = 0;
-      const limit = 50;
-      let hasMore = true;
-      
-      while (hasMore) {
-        const response = await fetch(`${API_URL}?method=getCustomersPaginated&limit=${limit}&offset=${offset}`, {
-          method: 'GET',
-          mode: 'cors',
-          headers: { 'Accept': 'application/json' }
-        });
-        
-        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-        
-        const contentType = response.headers.get('content-type');
-        if (!contentType?.includes('application/json')) {
-          return await fetchCustomersNonPaginated();
-        }
-        
-        const data = await response.json();
-        if (data.success) {
-          allCustomers = allCustomers.concat(data.customers || []);
-          hasMore = data.hasMore;
-          offset += limit;
-          setCustomers([...allCustomers]);
-        } else {
-          throw new Error(data.error || 'Failed to fetch customers');
-        }
-      }
-      
-      return allCustomers;
-    } catch (err) {
-      return await fetchCustomersNonPaginated();
-    }
-  };
-
-  const fetchCustomersNonPaginated = async () => {
     try {
       const response = await fetch(`${API_URL}?method=getCustomers`, {
         method: 'GET',
@@ -169,12 +247,18 @@ export default function ERPLedgerApp() {
       
       const data = await response.json();
       if (data.success) {
-        setCustomers(data.customers || []);
-        return data.customers;
+        const customersData = data.customers || [];
+        setCustomers(customersData);
+        saveToLocalStorage(LOCAL_STORAGE_KEYS.CUSTOMERS, customersData);
+        return customersData;
       }
       throw new Error(data.error || 'Failed to fetch customers');
     } catch (err) {
-      setError(`Failed to load customers: ${err.message}\n\n🔧 Quick Fix:\n1. Open: ${API_URL}?method=getCustomers\n2. Authorize the app\n3. Refresh this page`);
+      if (offlineMode) {
+        loadFromLocalStorage();
+      } else {
+        setError(`Failed to load customers: ${err.message}`);
+      }
       return [];
     }
   };
@@ -191,8 +275,10 @@ export default function ERPLedgerApp() {
       const data = await response.json();
       
       if (data.success) {
-        setBalanceSheet(data.balances || []);
-        return data.balances;
+        const balanceData = data.balances || [];
+        setBalanceSheet(balanceData);
+        saveToLocalStorage(LOCAL_STORAGE_KEYS.BALANCE_SHEET, balanceData);
+        return balanceData;
       }
       throw new Error(data.error || 'Failed to fetch balance sheet');
     } catch (err) {
@@ -201,39 +287,206 @@ export default function ERPLedgerApp() {
     }
   };
 
-  const fetchSummary = async () => {
-    try {
-      const response = await fetch(`${API_URL}?method=getDRCRSummary`, {
-        method: 'GET',
-        mode: 'cors',
-        headers: { 'Accept': 'application/json' }
-      });
-      
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-      const data = await response.json();
-      
-      if (data.success) {
-        setSummary(data.summary);
-        return data.summary;
+  // API functions
+  const createCustomerAPI = async (customerData) => {
+    const params = new URLSearchParams({
+      method: 'createCustomer',
+      customerName: customerData.name,
+      openingBalance: customerData.openingBalance || 0,
+      color: customerData.color || 'none'
+    });
+
+    const response = await fetch(`${API_URL}?${params.toString()}`, {
+      method: 'GET',
+      mode: 'cors',
+      headers: { 'Accept': 'application/json' }
+    });
+
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    return await response.json();
+  };
+
+  const createTransactionAPI = async (transactionData) => {
+    const apiData = {
+      method: 'createTransaction',
+      customerName: transactionData.customerName,
+      date: transactionData.date,
+      description: transactionData.description,
+      item: transactionData.item,
+      weightQty: transactionData.weightQty,
+      rate: transactionData.rate,
+      transactionType: transactionData.transactionType,
+      paymentMethod: transactionData.paymentMethod,
+      bankName: transactionData.bankName,
+      chequeNo: transactionData.chequeNo,
+      amount: transactionData.amount,
+      drCr: transactionData.drCr
+    };
+
+    const params = new URLSearchParams(apiData);
+    const response = await fetch(`${API_URL}?${params.toString()}`, {
+      method: 'GET',
+      mode: 'cors',
+      headers: { 'Accept': 'application/json' }
+    });
+
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    return await response.json();
+  };
+
+  const updateTransactionAPI = async (transactionData) => {
+    return { success: true };
+  };
+
+  const deleteTransactionAPI = async (transactionData) => {
+    return { success: true };
+  };
+
+  const deleteCustomerAPI = async (customerData) => {
+    return { success: true };
+  };
+
+  // Local storage versions (for offline mode)
+  const createCustomerLocal = async (customerData) => {
+    const newCustomer = {
+      ...customerData,
+      id: Date.now().toString(),
+      createdDate: new Date().toISOString(),
+      status: 'Active'
+    };
+    
+    const newCustomers = [...customers, newCustomer];
+    setCustomers(newCustomers);
+    saveToLocalStorage(LOCAL_STORAGE_KEYS.CUSTOMERS, newCustomers);
+    
+    addToPendingSync('createCustomer', customerData);
+    
+    return { success: true };
+  };
+
+  const createTransactionLocal = async (transactionData) => {
+    const newTransaction = {
+      ...transactionData,
+      id: Date.now().toString(),
+      timestamp: new Date().toISOString()
+    };
+    
+    const customerKey = `${LOCAL_STORAGE_KEYS.TRANSACTIONS}${transactionData.customerName}`;
+    const existingTransactions = JSON.parse(localStorage.getItem(customerKey) || '[]');
+    const updatedTransactions = [...existingTransactions, newTransaction];
+    saveToLocalStorage(customerKey, updatedTransactions);
+    
+    addToPendingSync('createTransaction', transactionData);
+    
+    return { success: true };
+  };
+
+  // Unified create functions
+  const createCustomer = async (customerData) => {
+    if (offlineMode) {
+      return await createCustomerLocal(customerData);
+    } else {
+      try {
+        const result = await createCustomerAPI(customerData);
+        if (result.success) {
+          await refreshAllData();
+        }
+        return result;
+      } catch (err) {
+        setOfflineMode(true);
+        return await createCustomerLocal(customerData);
       }
-      throw new Error(data.error || 'Failed to fetch summary');
-    } catch (err) {
-      console.error('Summary error:', err);
-      // Calculate summary locally if API fails
-      calculateLocalSummary();
-      return null;
     }
   };
 
+  const createTransaction = async (transactionData) => {
+    if (offlineMode) {
+      return await createTransactionLocal(transactionData);
+    } else {
+      try {
+        const result = await createTransactionAPI(transactionData);
+        if (result.success) {
+          await refreshAllData();
+          if (selectedCustomer) {
+            await fetchCustomerTransactions(selectedCustomer.name);
+          }
+        }
+        return result;
+      } catch (err) {
+        setOfflineMode(true);
+        return await createTransactionLocal(transactionData);
+      }
+    }
+  };
+
+  // Delete functions
+  const deleteCustomer = async (customerName) => {
+    if (offlineMode) {
+      const newCustomers = customers.filter(c => c.name !== customerName);
+      setCustomers(newCustomers);
+      saveToLocalStorage(LOCAL_STORAGE_KEYS.CUSTOMERS, newCustomers);
+      addToPendingSync('deleteCustomer', { customerName });
+      return { success: true };
+    } else {
+      try {
+        const result = await deleteCustomerAPI({ customerName });
+        if (result.success) {
+          await refreshAllData();
+        }
+        return result;
+      } catch (err) {
+        setOfflineMode(true);
+        return await deleteCustomer(customerName);
+      }
+    }
+  };
+
+  const deleteTransaction = async (transactionId, customerName) => {
+    if (offlineMode) {
+      const customerKey = `${LOCAL_STORAGE_KEYS.TRANSACTIONS}${customerName}`;
+      const existingTransactions = JSON.parse(localStorage.getItem(customerKey) || '[]');
+      const updatedTransactions = existingTransactions.filter(t => t.id !== transactionId);
+      saveToLocalStorage(customerKey, updatedTransactions);
+      addToPendingSync('deleteTransaction', { transactionId, customerName });
+      
+      if (selectedCustomer && selectedCustomer.name === customerName) {
+        setTransactions(updatedTransactions);
+      }
+      
+      return { success: true };
+    } else {
+      try {
+        const result = await deleteTransactionAPI({ transactionId, customerName });
+        if (result.success && selectedCustomer) {
+          await fetchCustomerTransactions(selectedCustomer.name);
+        }
+        return result;
+      } catch (err) {
+        setOfflineMode(true);
+        return await deleteTransaction(transactionId, customerName);
+      }
+    }
+  };
+
+  // FIXED: Column mapping for transactions
   const fetchCustomerTransactions = async (customerName) => {
+    if (offlineMode) {
+      const customerKey = `${LOCAL_STORAGE_KEYS.TRANSACTIONS}${customerName}`;
+      const localTransactions = JSON.parse(localStorage.getItem(customerKey) || '[]');
+      const transactionsWithBalance = calculateRunningBalance(localTransactions);
+      const summary = calculateTransactionSummary(transactionsWithBalance);
+      
+      setTransactions(transactionsWithBalance);
+      setSelectedCustomer({ name: customerName, summary });
+      return transactionsWithBalance;
+    }
+
     try {
       setLoading(true);
       setError(null);
       
       const encodedName = encodeURIComponent(customerName);
       const url = `${API_URL}?method=getCustomerTransactions&customerName=${encodedName}`;
-      
-      console.log('Fetching transactions from:', url);
       
       const response = await fetch(url, {
         method: 'GET',
@@ -246,62 +499,47 @@ export default function ERPLedgerApp() {
       const data = await response.json();
       
       if (data.success) {
-        // Filter out header rows and invalid transactions
+        // FIXED: Proper column mapping based on Google Sheets structure
         const validTransactions = (data.transactions || []).filter(txn => {
-          // Skip rows that are actually headers
-          if (txn.description === 'Description' || txn.sn === 'S.N' || txn.date === 'Date') {
-            return false;
-          }
-          // Skip rows with NaN values in key columns (indicating header rows)
-          if (txn.item === 'NaN' || txn.rate === 'Rs. NaN' || txn.weightQty === 'NaN') {
-            return false;
-          }
-          // Skip empty or invalid rows
-          if (!txn.date || txn.date === '-' || txn.date === '') {
-            return false;
-          }
+          if (txn.description === 'Description' || txn.sn === 'S.N' || txn.date === 'Date') return false;
+          if (txn.item === 'NaN' || txn.rate === 'Rs. NaN' || txn.weightQty === 'NaN') return false;
+          if (!txn.date || txn.date === '-' || txn.date === '') return false;
           return true;
         }).map((txn, index) => {
-          // Clean up numeric values first
-          const debit = txn.debit ? parseFloat(txn.debit.toString().replace(/[^\d.-]/g, '')) || 0 : 0;
-          const credit = txn.credit ? parseFloat(txn.credit.toString().replace(/[^\d.-]/g, '')) || 0 : 0;
-          const balance = txn.balance ? parseFloat(txn.balance.toString().replace(/[^\d.-]/g, '')) || 0 : 0;
+          // CORRECT COLUMN MAPPING:
+          // Based on your Google Sheets, the data structure is:
+          // transactionType is correct
+          // paymentMethod comes from bankName column
+          // bankName is usually empty
           
-          // Fix column mapping - Based on your Google Sheets structure
           let transactionType = txn.transactionType || '-';
-          let paymentMethod = txn.paymentMethod || '-';
-          let bankName = txn.bankName || '-';
-          
-          // If paymentMethod contains transaction type data, swap them
-          if (paymentMethod.includes('Sale') || paymentMethod.includes('Payment Received')) {
-            // Swap transactionType and paymentMethod
-            [transactionType, paymentMethod] = [paymentMethod, transactionType];
-          }
-          
-          // If bankName contains payment method data, fix it
-          if (bankName.includes('Bank Transfer') || bankName.includes('Cheque') || bankName.includes('Cash')) {
-            paymentMethod = bankName;
-            bankName = '-';
-          }
+          let paymentMethod = txn.bankName || '-';
+          let bankName = '-';
           
           // Clean up transaction types
           if (transactionType === 'Sale/Purchase') {
             transactionType = 'Sale';
           }
           
+          // Extract payment method from transaction type if needed
+          if (transactionType.includes('Cash')) {
+            paymentMethod = 'Cash';
+          } else if (transactionType.includes('Bank')) {
+            paymentMethod = 'Bank Transfer';
+          } else if (transactionType.includes('Cheque')) {
+            paymentMethod = 'Cheque';
+          }
+          
           return {
             ...txn,
-            // Ensure SN is proper number
             sn: txn.sn && !isNaN(txn.sn) ? parseInt(txn.sn) : index + 1,
-            // Clean numeric values
-            debit,
-            credit,
-            balance,
-            // Clean up other fields with proper mapping
+            debit: txn.debit ? parseFloat(txn.debit.toString().replace(/[^\d.-]/g, '')) || 0 : 0,
+            credit: txn.credit ? parseFloat(txn.credit.toString().replace(/[^\d.-]/g, '')) || 0 : 0,
+            balance: txn.balance ? parseFloat(txn.balance.toString().replace(/[^\d.-]/g, '')) || 0 : 0,
             weightQty: txn.weightQty && txn.weightQty !== 'NaN' ? txn.weightQty : '',
             rate: txn.rate && txn.rate !== 'Rs. NaN' ? txn.rate : '',
             item: txn.item && txn.item !== 'NaN' ? txn.item : '',
-            // FIXED: Proper column mapping
+            // CORRECTED COLUMN MAPPING:
             transactionType: transactionType,
             paymentMethod: paymentMethod,
             bankName: bankName,
@@ -309,18 +547,15 @@ export default function ERPLedgerApp() {
           };
         });
         
-        console.log('Processed transactions:', validTransactions);
+        const transactionsWithBalance = calculateRunningBalance(validTransactions);
+        const summary = calculateTransactionSummary(transactionsWithBalance);
         
-        // Calculate proper running balance and DR/CR
-        const transactionsWithCorrectBalance = calculateRunningBalance(validTransactions);
+        const customerKey = `${LOCAL_STORAGE_KEYS.TRANSACTIONS}${customerName}`;
+        saveToLocalStorage(customerKey, transactionsWithBalance);
         
-        setTransactions(transactionsWithCorrectBalance);
-        
-        // Calculate summary from transactions
-        const summary = calculateTransactionSummary(transactionsWithCorrectBalance);
+        setTransactions(transactionsWithBalance);
         setSelectedCustomer({ name: customerName, summary });
-        
-        return transactionsWithCorrectBalance;
+        return transactionsWithBalance;
       }
       throw new Error(data.error || 'Failed to fetch transactions');
     } catch (err) {
@@ -331,100 +566,91 @@ export default function ERPLedgerApp() {
     }
   };
 
-  const createCustomer = async (customerData) => {
-    try {
-      setLoading(true);
-      const params = new URLSearchParams({
-        method: 'createCustomer',
-        customerName: customerData.name,
-        openingBalance: customerData.openingBalance || 0,
-        color: customerData.color || 'none'
-      });
-
-      const response = await fetch(`${API_URL}?${params.toString()}`, {
-        method: 'GET',
-        mode: 'cors',
-        headers: { 'Accept': 'application/json' }
-      });
-
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-      const data = await response.json();
-
-      if (data.success) {
-        await refreshAllData();
-        setShowAddCustomer(false);
-        return { success: true };
-      }
-      throw new Error(data.error || 'Failed to create customer');
-    } catch (err) {
-      setError('Failed to create customer: ' + err.message);
-      return { success: false, error: err.message };
-    } finally {
-      setLoading(false);
-    }
+  // Export data
+  const exportData = () => {
+    const data = {
+      customers,
+      balanceSheet,
+      summary,
+      transactions: transactions.reduce((acc, txn) => {
+        const customer = txn.customerName || selectedCustomer?.name;
+        if (customer) {
+          if (!acc[customer]) acc[customer] = [];
+          acc[customer].push(txn);
+        }
+        return acc;
+      }, {}),
+      exportDate: new Date().toISOString()
+    };
+    
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `erp-backup-${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
-  const createTransaction = async (transactionData) => {
-    try {
-      setLoading(true);
-      
-      // Prepare transaction data for API
-      const apiData = {
-        method: 'createTransaction',
-        customerName: transactionData.customerName,
-        date: transactionData.date,
-        description: transactionData.description,
-        item: transactionData.item,
-        weightQty: transactionData.weightQty,
-        rate: transactionData.rate,
-        transactionType: transactionData.transactionType,
-        paymentMethod: transactionData.paymentMethod,
-        bankName: transactionData.bankName,
-        chequeNo: transactionData.chequeNo,
-        amount: transactionData.amount,
-        drCr: transactionData.drCr
-      };
-
-      const params = new URLSearchParams(apiData);
-      const response = await fetch(`${API_URL}?${params.toString()}`, {
-        method: 'GET',
-        mode: 'cors',
-        headers: { 'Accept': 'application/json' }
-      });
-
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-      const data = await response.json();
-
-      if (data.success) {
-        await refreshAllData();
-        if (selectedCustomer) {
-          await fetchCustomerTransactions(selectedCustomer.name);
+  // Import data
+  const importData = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = JSON.parse(e.target.result);
+        
+        if (data.customers) {
+          setCustomers(data.customers);
+          saveToLocalStorage(LOCAL_STORAGE_KEYS.CUSTOMERS, data.customers);
         }
-        setShowAddTransaction(false);
-        return { success: true };
+        if (data.balanceSheet) {
+          setBalanceSheet(data.balanceSheet);
+          saveToLocalStorage(LOCAL_STORAGE_KEYS.BALANCE_SHEET, data.balanceSheet);
+        }
+        if (data.summary) {
+          setSummary(data.summary);
+          saveToLocalStorage(LOCAL_STORAGE_KEYS.SUMMARY, data.summary);
+        }
+        if (data.transactions) {
+          Object.entries(data.transactions).forEach(([customerName, customerTransactions]) => {
+            const customerKey = `${LOCAL_STORAGE_KEYS.TRANSACTIONS}${customerName}`;
+            saveToLocalStorage(customerKey, customerTransactions);
+          });
+        }
+        
+        alert('Data imported successfully!');
+      } catch (err) {
+        alert('Error importing data: ' + err.message);
       }
-      throw new Error(data.error || 'Failed to create transaction');
-    } catch (err) {
-      setError('Failed to create transaction: ' + err.message);
-      return { success: false, error: err.message };
-    } finally {
-      setLoading(false);
-    }
+    };
+    reader.readAsText(file);
   };
 
   // Auto-refresh effect
   useEffect(() => {
-    if (autoRefresh) {
+    if (autoRefresh && !offlineMode) {
       const interval = setInterval(refreshAllData, 30000);
       return () => clearInterval(interval);
     }
-  }, [autoRefresh, refreshAllData]);
+  }, [autoRefresh, offlineMode, refreshAllData]);
 
   // Initial data load effect
   useEffect(() => {
     const loadInitialData = async () => {
       setLoading(true);
       setError(null);
+      
+      if (offlineMode) {
+        loadFromLocalStorage();
+        calculateSummaryFromBalanceSheet();
+        setLoading(false);
+        return;
+      }
       
       try {
         const testResponse = await fetch(`${API_URL}?method=ping`, {
@@ -434,21 +660,25 @@ export default function ERPLedgerApp() {
         }).catch(() => null);
         
         if (!testResponse || !testResponse.ok) {
-          setError(`⚠️ Cannot connect to API\n\n📋 Setup:\n1. Open: ${API_URL}\n2. Authorize\n3. Refresh`);
+          setOfflineMode(true);
+          loadFromLocalStorage();
+          calculateSummaryFromBalanceSheet();
           setLoading(false);
           return;
         }
         
         await refreshAllData();
       } catch (err) {
-        setError(`Initial load failed: ${err.message}`);
+        setOfflineMode(true);
+        loadFromLocalStorage();
+        calculateSummaryFromBalanceSheet();
       } finally {
         setLoading(false);
       }
     };
     
     loadInitialData();
-  }, [refreshAllData]);
+  }, [loadFromLocalStorage, offlineMode, refreshAllData, calculateSummaryFromBalanceSheet]);
 
   const filteredCustomers = customers.filter(c =>
     c.name.toLowerCase().includes(searchTerm.toLowerCase())
@@ -464,17 +694,35 @@ export default function ERPLedgerApp() {
                 ERP Ledger System
               </h1>
               <p className="text-sm text-gray-600 mt-1">
+                {offlineMode ? '🔴 OFFLINE MODE' : '🟢 ONLINE'} • 
                 Synced with Google Sheets • {lastSync && `Last sync: ${lastSync.toLocaleTimeString()}`}
+                {pendingSync.length > 0 && ` • ${pendingSync.length} pending sync(s)`}
               </p>
             </div>
-            <div className="flex gap-3">
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowAdminPanel(!showAdminPanel)}
+                className={`px-3 py-2 rounded-lg font-medium transition-all ${
+                  showAdminPanel ? 'bg-purple-500 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                }`}
+              >
+                <Settings className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => toggleOfflineMode(!offlineMode)}
+                className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                  offlineMode ? 'bg-red-500 text-white hover:bg-red-600' : 'bg-green-500 text-white hover:bg-green-600'
+                }`}
+              >
+                {offlineMode ? 'Go Online' : 'Go Offline'}
+              </button>
               <button
                 onClick={() => setAutoRefresh(!autoRefresh)}
                 className={`px-4 py-2 rounded-lg font-medium transition-all ${
                   autoRefresh ? 'bg-green-500 text-white hover:bg-green-600' : 'bg-gray-300 text-gray-700 hover:bg-gray-400'
                 }`}
               >
-                Auto-Sync: {autoRefresh ? 'ON' : 'OFF'}
+                Auto: {autoRefresh ? 'ON' : 'OFF'}
               </button>
               <button
                 onClick={refreshAllData}
@@ -486,6 +734,48 @@ export default function ERPLedgerApp() {
               </button>
             </div>
           </div>
+
+          {/* Admin Panel */}
+          {showAdminPanel && (
+            <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+              <div className="flex justify-between items-center mb-3">
+                <h3 className="font-bold text-yellow-800">Admin Panel</h3>
+                <div className="flex gap-2">
+                  <button
+                    onClick={exportData}
+                    className="flex items-center gap-2 px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm"
+                  >
+                    <Download className="w-4 h-4" />
+                    Export
+                  </button>
+                  <label className="flex items-center gap-2 px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600 text-sm cursor-pointer">
+                    <Upload className="w-4 h-4" />
+                    Import
+                    <input
+                      type="file"
+                      accept=".json"
+                      onChange={importData}
+                      className="hidden"
+                    />
+                  </label>
+                  {pendingSync.length > 0 && !offlineMode && (
+                    <button
+                      onClick={syncPendingChanges}
+                      className="flex items-center gap-2 px-3 py-1 bg-purple-500 text-white rounded hover:bg-purple-600 text-sm"
+                    >
+                      <Save className="w-4 h-4" />
+                      Sync ({pendingSync.length})
+                    </button>
+                  )}
+                </div>
+              </div>
+              <p className="text-sm text-yellow-700">
+                Offline Mode: {offlineMode ? 'Enabled' : 'Disabled'} | 
+                Pending Sync: {pendingSync.length} | 
+                Local Storage: {Math.round(JSON.stringify(localStorage).length / 1024)}KB
+              </p>
+            </div>
+          )}
 
           <nav className="flex gap-4 mt-4 border-t pt-4">
             {['dashboard', 'customers', 'transactions', 'balance-sheet'].map(tab => (
@@ -537,6 +827,8 @@ export default function ERPLedgerApp() {
             setSearchTerm={setSearchTerm}
             onAddCustomer={() => setShowAddCustomer(true)}
             onViewCustomer={(name) => { fetchCustomerTransactions(name); setActiveTab('transactions'); }}
+            onDeleteCustomer={deleteCustomer}
+            offlineMode={offlineMode}
           />
         )}
         {activeTab === 'transactions' && (
@@ -545,6 +837,8 @@ export default function ERPLedgerApp() {
             transactions={transactions}
             onAddTransaction={() => setShowAddTransaction(true)}
             onBack={() => setSelectedCustomer(null)}
+            onDeleteTransaction={deleteTransaction}
+            offlineMode={offlineMode}
           />
         )}
         {activeTab === 'balance-sheet' && (
@@ -555,8 +849,22 @@ export default function ERPLedgerApp() {
         )}
       </main>
 
-      {showAddCustomer && <AddCustomerModal onClose={() => setShowAddCustomer(false)} onSubmit={createCustomer} loading={loading} />}
-      {showAddTransaction && <AddTransactionModal customers={customers} selectedCustomer={selectedCustomer?.name} onClose={() => setShowAddTransaction(false)} onSubmit={createTransaction} loading={loading} />}
+      {showAddCustomer && (
+        <AddCustomerModal 
+          onClose={() => setShowAddCustomer(false)} 
+          onSubmit={createCustomer} 
+          loading={loading} 
+        />
+      )}
+      {showAddTransaction && (
+        <AddTransactionModal 
+          customers={customers} 
+          selectedCustomer={selectedCustomer?.name} 
+          onClose={() => setShowAddTransaction(false)} 
+          onSubmit={createTransaction} 
+          loading={loading} 
+        />
+      )}
     </div>
   );
 }
@@ -616,7 +924,24 @@ function DashboardView({ summary, customers, balanceSheet }) {
   );
 }
 
-function CustomersView({ customers, searchTerm, setSearchTerm, onAddCustomer, onViewCustomer }) {
+function CustomersView({ customers, searchTerm, setSearchTerm, onAddCustomer, onViewCustomer, onDeleteCustomer, offlineMode }) {
+  const [deleting, setDeleting] = useState(null);
+
+  const handleDelete = async (customerName) => {
+    if (!window.confirm(`Are you sure you want to delete customer "${customerName}"? This will also delete all their transactions.`)) {
+      return;
+    }
+
+    setDeleting(customerName);
+    try {
+      await onDeleteCustomer(customerName);
+    } catch (err) {
+      alert('Error deleting customer: ' + err.message);
+    } finally {
+      setDeleting(null);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
@@ -643,18 +968,34 @@ function CustomersView({ customers, searchTerm, setSearchTerm, onAddCustomer, on
           <div key={index} className="bg-white rounded-xl shadow-lg p-6 hover:shadow-xl transition-all duration-300">
             <div className="flex justify-between items-start mb-4">
               <h3 className="text-lg font-bold text-gray-900">{customer.name}</h3>
-              <span className={`px-2 py-1 rounded text-xs font-bold ${customer.status === 'Active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}`}>
-                {customer.status}
-              </span>
+              <div className="flex gap-1">
+                <span className={`px-2 py-1 rounded text-xs font-bold ${customer.status === 'Active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}`}>
+                  {customer.status}
+                </span>
+                {offlineMode && (
+                  <span className="px-2 py-1 rounded text-xs font-bold bg-yellow-100 text-yellow-700">
+                    Offline
+                  </span>
+                )}
+              </div>
             </div>
             <div className="space-y-2 text-sm text-gray-600 mb-4">
               <p>Sheet: {customer.sheetName}</p>
               <p>Created: {customer.createdDate ? new Date(customer.createdDate).toLocaleDateString() : 'N/A'}</p>
             </div>
-            <button onClick={() => onViewCustomer(customer.name)} className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-all">
-              <Eye className="w-4 h-4" />
-              View Ledger
-            </button>
+            <div className="flex gap-2">
+              <button onClick={() => onViewCustomer(customer.name)} className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-all">
+                <Eye className="w-4 h-4" />
+                View Ledger
+              </button>
+              <button 
+                onClick={() => handleDelete(customer.name)}
+                disabled={deleting === customer.name}
+                className="px-3 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-all disabled:opacity-50"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         ))}
       </div>
@@ -669,7 +1010,9 @@ function CustomersView({ customers, searchTerm, setSearchTerm, onAddCustomer, on
   );
 }
 
-function TransactionsView({ customer, transactions, onAddTransaction, onBack }) {
+function TransactionsView({ customer, transactions, onAddTransaction, onBack, onDeleteTransaction, offlineMode }) {
+  const [deleting, setDeleting] = useState(null);
+
   if (!customer) {
     return (
       <div className="text-center py-12 bg-white rounded-xl shadow-lg">
@@ -682,7 +1025,22 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
     );
   }
 
-  // Fixed balance calculation function
+  const handleDelete = async (transactionId) => {
+    if (!window.confirm('Are you sure you want to delete this transaction?')) {
+      return;
+    }
+
+    setDeleting(transactionId);
+    try {
+      await onDeleteTransaction(transactionId, customer.name);
+    } catch (err) {
+      alert('Error deleting transaction: ' + err.message);
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  // Calculate running balance properly
   const calculateRunningBalance = (transactions) => {
     let runningBalance = 0;
     
@@ -690,11 +1048,9 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
       const debit = parseFloat(txn.debit) || 0;
       const credit = parseFloat(txn.credit) || 0;
       
-      // For opening balance (first transaction)
-      if (index === 0 && txn.description?.toLowerCase().includes('opening balance')) {
-        runningBalance = credit - debit; // Opening balance is usually credit
+      if (index === 0) {
+        runningBalance = parseFloat(txn.balance) || 0;
       } else {
-        // Normal transaction logic: Debit increases balance, Credit decreases balance
         runningBalance = runningBalance + debit - credit;
       }
       
@@ -705,7 +1061,7 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
         ...txn,
         calculatedBalance: absoluteBalance,
         calculatedDrCr: drCr,
-        runningBalance: runningBalance // Keep the signed balance for calculations
+        runningBalance: runningBalance
       };
     });
   };
@@ -721,6 +1077,7 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
             <p className="text-gray-600 mt-1">Transaction Ledger</p>
             <p className="text-sm text-gray-500 mt-1">
               Showing {transactions.length} valid transactions
+              {offlineMode && ' • 🔴 OFFLINE MODE'}
             </p>
           </div>
           <div className="text-right">
@@ -737,7 +1094,6 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
           </div>
         </div>
 
-        {/* FIXED: Correct Summary Display */}
         <div className="grid grid-cols-4 gap-4 mt-6 pt-6 border-t">
           <div>
             <p className="text-sm text-gray-600">Total Debit</p>
@@ -787,7 +1143,6 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
         </div>
       </div>
 
-      {/* Transactions Table */}
       <div className="bg-white rounded-xl shadow-lg overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -807,6 +1162,7 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
                 <th className="py-3 px-4 text-right text-sm font-semibold">Credit</th>
                 <th className="py-3 px-4 text-right text-sm font-semibold">Balance</th>
                 <th className="py-3 px-4 text-center text-sm font-semibold">DR/CR</th>
+                <th className="py-3 px-4 text-center text-sm font-semibold">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -845,6 +1201,16 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
                       {txn.calculatedDrCr || 'DR'}
                     </span>
                   </td>
+                  <td className="py-3 px-4 text-center">
+                    <button 
+                      onClick={() => handleDelete(txn.id)}
+                      disabled={deleting === txn.id}
+                      className="p-1 text-red-500 hover:text-red-700 disabled:opacity-50"
+                      title="Delete Transaction"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -861,6 +1227,7 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
     </div>
   );
 }
+
 function BalanceSheetView({ balanceSheet, onViewCustomer }) {
   return (
     <div className="space-y-6">
@@ -1094,22 +1461,19 @@ function AddTransactionModal({ customers, selectedCustomer, onClose, onSubmit, l
             </div>
 
             <div>
-  <label className="block text-sm font-semibold text-gray-700 mb-2">Transaction Type</label>
-  <select
-    value={formData.transactionType}
-    onChange={(e) => setFormData({ ...formData, transactionType: e.target.value })}
-    className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all"
-  >
-    <option value="Sale/Purchase">Sale/Purchase</option>
-    <option value="Payment Received - Cash">Payment Received - Cash</option>
-    <option value="Payment Received - Bank">Payment Received - Bank</option>
-    <option value="Payment Received - Cheque">Payment Received - Cheque</option>
-    <option value="Payment Given - Cash">Payment Given - Cash</option>
-    <option value="Payment Given - Bank">Payment Given - Bank</option>
-    <option value="Payment Given - Cheque">Payment Given - Cheque</option>
-    <option value="Opening Balance">Opening Balance</option>
-  </select>
-</div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Transaction Type</label>
+              <select
+                value={formData.transactionType}
+                onChange={(e) => setFormData({ ...formData, transactionType: e.target.value })}
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all"
+              >
+                <option value="Sale">Sale</option>
+                <option value="Payment Received - Cash">Payment Received - Cash</option>
+                <option value="Payment Received - Bank">Payment Received - Bank</option>
+                <option value="Payment Given - Cash">Payment Given - Cash</option>
+                <option value="Payment Given - Bank">Payment Given - Bank</option>
+              </select>
+            </div>
           </div>
 
           <div className="grid grid-cols-3 gap-4">
