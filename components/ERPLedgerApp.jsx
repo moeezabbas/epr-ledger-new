@@ -199,60 +199,65 @@ export default function ERPLedgerApp() {
         }
         return true;
       }).map((txn, index) => {
-        // Fix the column mapping based on your Google Sheets structure
-        const transactionType = txn.transactionType || txn.paymentMethod || '-';
-        const paymentMethod = txn.paymentMethod || '-';
+        // Clean up numeric values first
+        const debit = txn.debit ? parseFloat(txn.debit.toString().replace(/[^\d.-]/g, '')) || 0 : 0;
+        const credit = txn.credit ? parseFloat(txn.credit.toString().replace(/[^\d.-]/g, '')) || 0 : 0;
+        const balance = txn.balance ? parseFloat(txn.balance.toString().replace(/[^\d.-]/g, '')) || 0 : 0;
         
-        // Determine correct payment method based on transaction type
-        let correctedPaymentMethod = paymentMethod;
-        let correctedTransactionType = transactionType;
+        // Fix column mapping - Based on your Google Sheets structure
+        let transactionType = txn.transactionType || '-';
+        let paymentMethod = txn.paymentMethod || '-';
+        let bankName = txn.bankName || '-';
         
-        // If transaction type contains payment info, extract it
-        if (transactionType.includes('Cash') || transactionType.includes('Bank') || transactionType.includes('Cheque')) {
-          correctedPaymentMethod = transactionType.includes('Cash') ? 'Cash' : 
-                                 transactionType.includes('Bank') ? 'Bank Transfer' : 
-                                 transactionType.includes('Cheque') ? 'Cheque' : '-';
-          
-          // Set transaction type to base type
-          if (transactionType.includes('Payment Received')) {
-            correctedTransactionType = 'Payment Received';
-          } else if (transactionType.includes('Payment Given')) {
-            correctedTransactionType = 'Payment Given';
-          } else if (transactionType.includes('Sale')) {
-            correctedTransactionType = 'Sale';
-          } else if (transactionType.includes('Purchase')) {
-            correctedTransactionType = 'Purchase';
-          }
+        // If paymentMethod contains transaction type data, swap them
+        if (paymentMethod.includes('Sale') || paymentMethod.includes('Payment Received')) {
+          // Swap transactionType and paymentMethod
+          [transactionType, paymentMethod] = [paymentMethod, transactionType];
+        }
+        
+        // If bankName contains payment method data, fix it
+        if (bankName.includes('Bank Transfer') || bankName.includes('Cheque') || bankName.includes('Cash')) {
+          paymentMethod = bankName;
+          bankName = '-';
+        }
+        
+        // Clean up transaction types
+        if (transactionType === 'Sale/Purchase') {
+          transactionType = 'Sale';
         }
         
         return {
           ...txn,
           // Ensure SN is proper number
           sn: txn.sn && !isNaN(txn.sn) ? parseInt(txn.sn) : index + 1,
-          // Clean up numeric values
-          debit: txn.debit ? parseFloat(txn.debit.toString().replace(/[^\d.-]/g, '')) || 0 : 0,
-          credit: txn.credit ? parseFloat(txn.credit.toString().replace(/[^\d.-]/g, '')) || 0 : 0,
-          balance: txn.balance ? parseFloat(txn.balance.toString().replace(/[^\d.-]/g, '')) || 0 : 0,
+          // Clean numeric values
+          debit,
+          credit,
+          balance,
           // Clean up other fields with proper mapping
           weightQty: txn.weightQty && txn.weightQty !== 'NaN' ? txn.weightQty : '',
           rate: txn.rate && txn.rate !== 'Rs. NaN' ? txn.rate : '',
           item: txn.item && txn.item !== 'NaN' ? txn.item : '',
           // FIXED: Proper column mapping
-          transactionType: correctedTransactionType,
-          paymentMethod: correctedPaymentMethod,
-          bankName: txn.bankName || '-',
+          transactionType: transactionType,
+          paymentMethod: paymentMethod,
+          bankName: bankName,
           chequeNo: txn.chequeNo || '-'
         };
       });
       
-      console.log('Corrected transactions:', validTransactions);
-      setTransactions(validTransactions);
+      console.log('Processed transactions:', validTransactions);
+      
+      // Calculate proper running balance and DR/CR
+      const transactionsWithCorrectBalance = calculateRunningBalance(validTransactions);
+      
+      setTransactions(transactionsWithCorrectBalance);
       
       // Calculate summary from transactions
-      const summary = calculateTransactionSummary(validTransactions);
+      const summary = calculateTransactionSummary(transactionsWithCorrectBalance);
       setSelectedCustomer({ name: customerName, summary });
       
-      return validTransactions;
+      return transactionsWithCorrectBalance;
     }
     throw new Error(data.error || 'Failed to fetch transactions');
   } catch (err) {
@@ -261,6 +266,70 @@ export default function ERPLedgerApp() {
   } finally {
     setLoading(false);
   }
+};
+
+// Fixed balance calculation function
+const calculateRunningBalance = (transactions) => {
+  let runningBalance = 0;
+  
+  return transactions.map((txn, index) => {
+    const debit = parseFloat(txn.debit) || 0;
+    const credit = parseFloat(txn.credit) || 0;
+    
+    // For opening balance (first transaction)
+    if (index === 0 && txn.description?.toLowerCase().includes('opening balance')) {
+      runningBalance = credit - debit; // Opening balance is usually credit
+    } else {
+      // Normal transaction logic: Debit increases balance, Credit decreases balance
+      // But in accounting: Debit = they owe you, Credit = you owe them
+      runningBalance = runningBalance + debit - credit;
+    }
+    
+    const drCr = runningBalance >= 0 ? 'DR' : 'CR';
+    const absoluteBalance = Math.abs(runningBalance);
+    
+    return {
+      ...txn,
+      calculatedBalance: absoluteBalance,
+      calculatedDrCr: drCr,
+      runningBalance: runningBalance // Keep the signed balance for calculations
+    };
+  });
+};
+
+// Fixed summary calculation
+const calculateTransactionSummary = (transactions) => {
+  if (!transactions || transactions.length === 0) {
+    return {
+      totalDebit: 0,
+      totalCredit: 0,
+      finalBalance: 0,
+      finalDRCR: 'DR',
+      transactionCount: 0,
+      netBalance: 0
+    };
+  }
+  
+  const totalDebit = transactions.reduce((sum, txn) => sum + (parseFloat(txn.debit) || 0), 0);
+  const totalCredit = transactions.reduce((sum, txn) => sum + (parseFloat(txn.credit) || 0), 0);
+  
+  // Get the final balance from the last transaction
+  const lastTransaction = transactions[transactions.length - 1];
+  const finalBalance = lastTransaction.calculatedBalance || 0;
+  const finalDRCR = lastTransaction.calculatedDrCr || 'DR';
+  
+  // Net balance (signed)
+  const netBalance = totalDebit - totalCredit;
+  
+  return {
+    totalDebit,
+    totalCredit,
+    finalBalance,
+    finalDRCR,
+    transactionCount: transactions.length,
+    netBalance: Math.abs(netBalance),
+    netDRCR: netBalance >= 0 ? 'DR' : 'CR'
+  };
 };
 
 // Add this helper function to calculate summary from transactions
@@ -631,27 +700,30 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
     );
   }
 
-  // Calculate running balance properly
+  // Fixed balance calculation function
   const calculateRunningBalance = (transactions) => {
-    let balance = 0;
-    return transactions.map(txn => {
+    let runningBalance = 0;
+    
+    return transactions.map((txn, index) => {
       const debit = parseFloat(txn.debit) || 0;
       const credit = parseFloat(txn.credit) || 0;
       
-      // For opening balance, set directly
-      if (txn.description?.toLowerCase().includes('opening balance')) {
-        balance = parseFloat(txn.balance) || debit - credit;
+      // For opening balance (first transaction)
+      if (index === 0 && txn.description?.toLowerCase().includes('opening balance')) {
+        runningBalance = credit - debit; // Opening balance is usually credit
       } else {
-        // Normal transaction: balance = previous balance + debit - credit
-        balance = balance + debit - credit;
+        // Normal transaction logic: Debit increases balance, Credit decreases balance
+        runningBalance = runningBalance + debit - credit;
       }
       
-      const drCr = balance >= 0 ? 'DR' : 'CR';
+      const drCr = runningBalance >= 0 ? 'DR' : 'CR';
+      const absoluteBalance = Math.abs(runningBalance);
       
       return {
         ...txn,
-        calculatedBalance: Math.abs(balance),
-        calculatedDrCr: drCr
+        calculatedBalance: absoluteBalance,
+        calculatedDrCr: drCr,
+        runningBalance: runningBalance // Keep the signed balance for calculations
       };
     });
   };
@@ -676,14 +748,14 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
             </p>
             <span className={`inline-block px-3 py-1 rounded-full text-sm font-bold mt-2 ${
               customer.summary?.finalDRCR === 'DR' ? 'bg-red-100 text-red-700' : 
-              customer.summary?.finalDRCR === 'CR' ? 'bg-green-100 text-green-700' : 
-              'bg-gray-100 text-gray-700'
+              'bg-green-100 text-green-700'
             }`}>
-              {customer.summary?.finalDRCR || 'BAL'}
+              {customer.summary?.finalDRCR || 'DR'}
             </span>
           </div>
         </div>
 
+        {/* FIXED: Correct Summary Display */}
         <div className="grid grid-cols-4 gap-4 mt-6 pt-6 border-t">
           <div>
             <p className="text-sm text-gray-600">Total Debit</p>
@@ -698,10 +770,15 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
             </p>
           </div>
           <div>
-            <p className="text-sm text-gray-600">Net Balance</p>
+            <p className="text-sm text-gray-600">Net Position</p>
             <p className="text-lg font-bold text-blue-600">
-              Rs. {Math.abs(customer.summary?.netBalance || 0).toLocaleString()}
+              Rs. {customer.summary?.netBalance?.toLocaleString() || '0'}
             </p>
+            <span className={`text-sm font-medium ${
+              customer.summary?.netDRCR === 'DR' ? 'text-red-600' : 'text-green-600'
+            }`}>
+              {customer.summary?.netDRCR}
+            </span>
           </div>
           <div>
             <p className="text-sm text-gray-600">Transactions</p>
@@ -728,7 +805,7 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
         </div>
       </div>
 
-      {/* Fixed Transactions Table */}
+      {/* Transactions Table */}
       <div className="bg-white rounded-xl shadow-lg overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -776,14 +853,14 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
                     {txn.credit && txn.credit !== 0 ? `Rs. ${parseFloat(txn.credit).toLocaleString()}` : '-'}
                   </td>
                   <td className="py-3 px-4 text-sm text-right font-bold">
-                    Rs. {(txn.calculatedBalance || Math.abs(parseFloat(txn.balance) || 0)).toLocaleString()}
+                    Rs. {(txn.calculatedBalance || 0).toLocaleString()}
                   </td>
                   <td className="py-3 px-4 text-center">
                     <span className={`px-2 py-1 rounded-full text-xs font-bold ${
-                      (txn.calculatedDrCr || txn.drCr) === 'DR' ? 'bg-red-100 text-red-700' : 
+                      txn.calculatedDrCr === 'DR' ? 'bg-red-100 text-red-700' : 
                       'bg-green-100 text-green-700'
                     }`}>
-                      {txn.calculatedDrCr || txn.drCr || 'DR'}
+                      {txn.calculatedDrCr || 'DR'}
                     </span>
                   </td>
                 </tr>
@@ -796,9 +873,6 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
           <div className="text-center py-12">
             <AlertCircle className="w-16 h-16 text-gray-300 mx-auto mb-4" />
             <p className="text-gray-500 text-lg">No transactions found</p>
-            <p className="text-sm text-gray-400 mt-2">
-              Check browser console for debugging information
-            </p>
           </div>
         )}
       </div>
