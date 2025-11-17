@@ -21,6 +21,90 @@ export default function ERPLedgerApp() {
   const [showAddCustomer, setShowAddCustomer] = useState(false);
   const [showAddTransaction, setShowAddTransaction] = useState(false);
 
+  // Calculate DR/CR summary locally as fallback
+  const calculateLocalSummary = () => {
+    const totalDr = balanceSheet
+      .filter(item => item.drCr === 'DR')
+      .reduce((sum, item) => sum + (Math.abs(item.balance) || 0), 0);
+    
+    const totalCr = balanceSheet
+      .filter(item => item.drCr === 'CR')
+      .reduce((sum, item) => sum + (Math.abs(item.balance) || 0), 0);
+    
+    const netPosition = totalDr - totalCr;
+    const status = netPosition > 0 ? 'NET DR' : netPosition < 0 ? 'NET CR' : 'BALANCED';
+    
+    setSummary({
+      totalDr,
+      totalCr,
+      netPosition: Math.abs(netPosition),
+      status
+    });
+  };
+
+  // Fixed summary calculation
+  const calculateTransactionSummary = (transactions) => {
+    if (!transactions || transactions.length === 0) {
+      return {
+        totalDebit: 0,
+        totalCredit: 0,
+        finalBalance: 0,
+        finalDRCR: 'DR',
+        transactionCount: 0,
+        netBalance: 0
+      };
+    }
+    
+    const totalDebit = transactions.reduce((sum, txn) => sum + (parseFloat(txn.debit) || 0), 0);
+    const totalCredit = transactions.reduce((sum, txn) => sum + (parseFloat(txn.credit) || 0), 0);
+    
+    // Get the final balance from the last transaction
+    const lastTransaction = transactions[transactions.length - 1];
+    const finalBalance = lastTransaction.calculatedBalance || 0;
+    const finalDRCR = lastTransaction.calculatedDrCr || 'DR';
+    
+    // Net balance (signed)
+    const netBalance = totalDebit - totalCredit;
+    
+    return {
+      totalDebit,
+      totalCredit,
+      finalBalance,
+      finalDRCR,
+      transactionCount: transactions.length,
+      netBalance: Math.abs(netBalance),
+      netDRCR: netBalance >= 0 ? 'DR' : 'CR'
+    };
+  };
+
+  // Fixed balance calculation function
+  const calculateRunningBalance = (transactions) => {
+    let runningBalance = 0;
+    
+    return transactions.map((txn, index) => {
+      const debit = parseFloat(txn.debit) || 0;
+      const credit = parseFloat(txn.credit) || 0;
+      
+      // For opening balance (first transaction)
+      if (index === 0 && txn.description?.toLowerCase().includes('opening balance')) {
+        runningBalance = credit - debit; // Opening balance is usually credit
+      } else {
+        // Normal transaction logic: Debit increases balance, Credit decreases balance
+        runningBalance = runningBalance + debit - credit;
+      }
+      
+      const drCr = runningBalance >= 0 ? 'DR' : 'CR';
+      const absoluteBalance = Math.abs(runningBalance);
+      
+      return {
+        ...txn,
+        calculatedBalance: absoluteBalance,
+        calculatedDrCr: drCr,
+        runningBalance: runningBalance // Keep the signed balance for calculations
+      };
+    });
+  };
+
   // Wrap refreshAllData in useCallback to avoid useEffect dependencies
   const refreshAllData = useCallback(async () => {
     setLoading(true);
@@ -141,213 +225,111 @@ export default function ERPLedgerApp() {
     }
   };
 
-  // Calculate DR/CR summary locally as fallback
-  const calculateLocalSummary = () => {
-    const totalDr = balanceSheet
-      .filter(item => item.drCr === 'DR')
-      .reduce((sum, item) => sum + (Math.abs(item.balance) || 0), 0);
-    
-    const totalCr = balanceSheet
-      .filter(item => item.drCr === 'CR')
-      .reduce((sum, item) => sum + (Math.abs(item.balance) || 0), 0);
-    
-    const netPosition = totalDr - totalCr;
-    const status = netPosition > 0 ? 'NET DR' : netPosition < 0 ? 'NET CR' : 'BALANCED';
-    
-    setSummary({
-      totalDr,
-      totalCr,
-      netPosition: Math.abs(netPosition),
-      status
-    });
-  };
-
- const fetchCustomerTransactions = async (customerName) => {
-  try {
-    setLoading(true);
-    setError(null);
-    
-    const encodedName = encodeURIComponent(customerName);
-    const url = `${API_URL}?method=getCustomerTransactions&customerName=${encodedName}`;
-    
-    console.log('Fetching transactions from:', url);
-    
-    const response = await fetch(url, {
-      method: 'GET',
-      mode: 'cors',
-      headers: { 'Accept': 'application/json' }
-    });
-    
-    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-    
-    const data = await response.json();
-    
-    if (data.success) {
-      // Filter out header rows and invalid transactions
-      const validTransactions = (data.transactions || []).filter(txn => {
-        // Skip rows that are actually headers
-        if (txn.description === 'Description' || txn.sn === 'S.N' || txn.date === 'Date') {
-          return false;
-        }
-        // Skip rows with NaN values in key columns (indicating header rows)
-        if (txn.item === 'NaN' || txn.rate === 'Rs. NaN' || txn.weightQty === 'NaN') {
-          return false;
-        }
-        // Skip empty or invalid rows
-        if (!txn.date || txn.date === '-' || txn.date === '') {
-          return false;
-        }
-        return true;
-      }).map((txn, index) => {
-        // Clean up numeric values first
-        const debit = txn.debit ? parseFloat(txn.debit.toString().replace(/[^\d.-]/g, '')) || 0 : 0;
-        const credit = txn.credit ? parseFloat(txn.credit.toString().replace(/[^\d.-]/g, '')) || 0 : 0;
-        const balance = txn.balance ? parseFloat(txn.balance.toString().replace(/[^\d.-]/g, '')) || 0 : 0;
-        
-        // Fix column mapping - Based on your Google Sheets structure
-        let transactionType = txn.transactionType || '-';
-        let paymentMethod = txn.paymentMethod || '-';
-        let bankName = txn.bankName || '-';
-        
-        // If paymentMethod contains transaction type data, swap them
-        if (paymentMethod.includes('Sale') || paymentMethod.includes('Payment Received')) {
-          // Swap transactionType and paymentMethod
-          [transactionType, paymentMethod] = [paymentMethod, transactionType];
-        }
-        
-        // If bankName contains payment method data, fix it
-        if (bankName.includes('Bank Transfer') || bankName.includes('Cheque') || bankName.includes('Cash')) {
-          paymentMethod = bankName;
-          bankName = '-';
-        }
-        
-        // Clean up transaction types
-        if (transactionType === 'Sale/Purchase') {
-          transactionType = 'Sale';
-        }
-        
-        return {
-          ...txn,
-          // Ensure SN is proper number
-          sn: txn.sn && !isNaN(txn.sn) ? parseInt(txn.sn) : index + 1,
-          // Clean numeric values
-          debit,
-          credit,
-          balance,
-          // Clean up other fields with proper mapping
-          weightQty: txn.weightQty && txn.weightQty !== 'NaN' ? txn.weightQty : '',
-          rate: txn.rate && txn.rate !== 'Rs. NaN' ? txn.rate : '',
-          item: txn.item && txn.item !== 'NaN' ? txn.item : '',
-          // FIXED: Proper column mapping
-          transactionType: transactionType,
-          paymentMethod: paymentMethod,
-          bankName: bankName,
-          chequeNo: txn.chequeNo || '-'
-        };
+  const fetchCustomerTransactions = async (customerName) => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      const encodedName = encodeURIComponent(customerName);
+      const url = `${API_URL}?method=getCustomerTransactions&customerName=${encodedName}`;
+      
+      console.log('Fetching transactions from:', url);
+      
+      const response = await fetch(url, {
+        method: 'GET',
+        mode: 'cors',
+        headers: { 'Accept': 'application/json' }
       });
       
-      console.log('Processed transactions:', validTransactions);
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       
-      // Calculate proper running balance and DR/CR
-      const transactionsWithCorrectBalance = calculateRunningBalance(validTransactions);
+      const data = await response.json();
       
-      setTransactions(transactionsWithCorrectBalance);
-      
-      // Calculate summary from transactions
-      const summary = calculateTransactionSummary(transactionsWithCorrectBalance);
-      setSelectedCustomer({ name: customerName, summary });
-      
-      return transactionsWithCorrectBalance;
+      if (data.success) {
+        // Filter out header rows and invalid transactions
+        const validTransactions = (data.transactions || []).filter(txn => {
+          // Skip rows that are actually headers
+          if (txn.description === 'Description' || txn.sn === 'S.N' || txn.date === 'Date') {
+            return false;
+          }
+          // Skip rows with NaN values in key columns (indicating header rows)
+          if (txn.item === 'NaN' || txn.rate === 'Rs. NaN' || txn.weightQty === 'NaN') {
+            return false;
+          }
+          // Skip empty or invalid rows
+          if (!txn.date || txn.date === '-' || txn.date === '') {
+            return false;
+          }
+          return true;
+        }).map((txn, index) => {
+          // Clean up numeric values first
+          const debit = txn.debit ? parseFloat(txn.debit.toString().replace(/[^\d.-]/g, '')) || 0 : 0;
+          const credit = txn.credit ? parseFloat(txn.credit.toString().replace(/[^\d.-]/g, '')) || 0 : 0;
+          const balance = txn.balance ? parseFloat(txn.balance.toString().replace(/[^\d.-]/g, '')) || 0 : 0;
+          
+          // Fix column mapping - Based on your Google Sheets structure
+          let transactionType = txn.transactionType || '-';
+          let paymentMethod = txn.paymentMethod || '-';
+          let bankName = txn.bankName || '-';
+          
+          // If paymentMethod contains transaction type data, swap them
+          if (paymentMethod.includes('Sale') || paymentMethod.includes('Payment Received')) {
+            // Swap transactionType and paymentMethod
+            [transactionType, paymentMethod] = [paymentMethod, transactionType];
+          }
+          
+          // If bankName contains payment method data, fix it
+          if (bankName.includes('Bank Transfer') || bankName.includes('Cheque') || bankName.includes('Cash')) {
+            paymentMethod = bankName;
+            bankName = '-';
+          }
+          
+          // Clean up transaction types
+          if (transactionType === 'Sale/Purchase') {
+            transactionType = 'Sale';
+          }
+          
+          return {
+            ...txn,
+            // Ensure SN is proper number
+            sn: txn.sn && !isNaN(txn.sn) ? parseInt(txn.sn) : index + 1,
+            // Clean numeric values
+            debit,
+            credit,
+            balance,
+            // Clean up other fields with proper mapping
+            weightQty: txn.weightQty && txn.weightQty !== 'NaN' ? txn.weightQty : '',
+            rate: txn.rate && txn.rate !== 'Rs. NaN' ? txn.rate : '',
+            item: txn.item && txn.item !== 'NaN' ? txn.item : '',
+            // FIXED: Proper column mapping
+            transactionType: transactionType,
+            paymentMethod: paymentMethod,
+            bankName: bankName,
+            chequeNo: txn.chequeNo || '-'
+          };
+        });
+        
+        console.log('Processed transactions:', validTransactions);
+        
+        // Calculate proper running balance and DR/CR
+        const transactionsWithCorrectBalance = calculateRunningBalance(validTransactions);
+        
+        setTransactions(transactionsWithCorrectBalance);
+        
+        // Calculate summary from transactions
+        const summary = calculateTransactionSummary(transactionsWithCorrectBalance);
+        setSelectedCustomer({ name: customerName, summary });
+        
+        return transactionsWithCorrectBalance;
+      }
+      throw new Error(data.error || 'Failed to fetch transactions');
+    } catch (err) {
+      setError('Failed to fetch transactions: ' + err.message);
+      return [];
+    } finally {
+      setLoading(false);
     }
-    throw new Error(data.error || 'Failed to fetch transactions');
-  } catch (err) {
-    setError('Failed to fetch transactions: ' + err.message);
-    return [];
-  } finally {
-    setLoading(false);
-  }
-};
-
-// Fixed balance calculation function
-const calculateRunningBalance = (transactions) => {
-  let runningBalance = 0;
-  
-  return transactions.map((txn, index) => {
-    const debit = parseFloat(txn.debit) || 0;
-    const credit = parseFloat(txn.credit) || 0;
-    
-    // For opening balance (first transaction)
-    if (index === 0 && txn.description?.toLowerCase().includes('opening balance')) {
-      runningBalance = credit - debit; // Opening balance is usually credit
-    } else {
-      // Normal transaction logic: Debit increases balance, Credit decreases balance
-      // But in accounting: Debit = they owe you, Credit = you owe them
-      runningBalance = runningBalance + debit - credit;
-    }
-    
-    const drCr = runningBalance >= 0 ? 'DR' : 'CR';
-    const absoluteBalance = Math.abs(runningBalance);
-    
-    return {
-      ...txn,
-      calculatedBalance: absoluteBalance,
-      calculatedDrCr: drCr,
-      runningBalance: runningBalance // Keep the signed balance for calculations
-    };
-  });
-};
-
-// Fixed summary calculation
-const calculateTransactionSummary = (transactions) => {
-  if (!transactions || transactions.length === 0) {
-    return {
-      totalDebit: 0,
-      totalCredit: 0,
-      finalBalance: 0,
-      finalDRCR: 'DR',
-      transactionCount: 0,
-      netBalance: 0
-    };
-  }
-  
-  const totalDebit = transactions.reduce((sum, txn) => sum + (parseFloat(txn.debit) || 0), 0);
-  const totalCredit = transactions.reduce((sum, txn) => sum + (parseFloat(txn.credit) || 0), 0);
-  
-  // Get the final balance from the last transaction
-  const lastTransaction = transactions[transactions.length - 1];
-  const finalBalance = lastTransaction.calculatedBalance || 0;
-  const finalDRCR = lastTransaction.calculatedDrCr || 'DR';
-  
-  // Net balance (signed)
-  const netBalance = totalDebit - totalCredit;
-  
-  return {
-    totalDebit,
-    totalCredit,
-    finalBalance,
-    finalDRCR,
-    transactionCount: transactions.length,
-    netBalance: Math.abs(netBalance),
-    netDRCR: netBalance >= 0 ? 'DR' : 'CR'
   };
-};
-
-// Add this helper function to calculate summary from transactions
-const calculateTransactionSummary = (transactions) => {
-  const totalDebit = transactions.reduce((sum, txn) => sum + (parseFloat(txn.debit) || 0), 0);
-  const totalCredit = transactions.reduce((sum, txn) => sum + (parseFloat(txn.credit) || 0), 0);
-  const finalBalance = totalCredit - totalDebit;
-  const finalDRCR = finalBalance >= 0 ? 'CR' : 'DR';
-  
-  return {
-    totalDebit,
-    totalCredit,
-    finalBalance: Math.abs(finalBalance),
-    finalDRCR,
-    transactionCount: transactions.length,
-    netBalance: finalBalance
-  };
-};
 
   const createCustomer = async (customerData) => {
     try {
@@ -879,7 +861,6 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack }) 
     </div>
   );
 }
-
 function BalanceSheetView({ balanceSheet, onViewCustomer }) {
   return (
     <div className="space-y-6">
