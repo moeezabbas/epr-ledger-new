@@ -330,7 +330,7 @@ export default function ERPLedgerApp() {
         method: 'GET',
         mode: 'cors',
         headers: { 'Accept': 'application/json' },
-        signal: AbortSignal.timeout(10000)
+        signal: AbortSignal.timeout(15000) // Increased timeout
       });
       
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
@@ -400,7 +400,13 @@ export default function ERPLedgerApp() {
       }
       throw new Error(data.error || 'Failed to fetch transactions');
     } catch (err) {
+      console.error('Transaction fetch error:', err);
       setError('Failed to fetch transactions: ' + err.message);
+      
+      // Don't clear selected customer on error - allow retry
+      setSelectedCustomer({ name: customerName });
+      setTransactions([]);
+      
       return [];
     } finally {
       setLoading(false);
@@ -514,13 +520,46 @@ export default function ERPLedgerApp() {
     reader.readAsText(file);
   }, [setCustomers, setBalanceSheet, setSummary]);
 
-  // FIXED: Tab switching function
+  // FIXED: Improved tab switching function
   const handleTabChange = useCallback((tab) => {
     console.log('Changing tab to:', tab);
+    
+    // Clear transactions and selected customer when leaving transactions tab
+    if (activeTab === 'transactions' && tab !== 'transactions') {
+      setTransactions([]);
+      setSelectedCustomer(null);
+    }
+    
     setActiveTab(tab);
     setMobileMenuOpen(false);
+    setError(null);
+  }, [activeTab]);
+
+  // FIXED: Improved customer view function
+  const handleViewCustomer = useCallback((customerName) => {
+    console.log('Viewing customer:', customerName);
     
-    // Clear any errors when switching tabs
+    // First set the selected customer
+    setSelectedCustomer({ name: customerName });
+    
+    // Then fetch transactions
+    fetchCustomerTransactions(customerName);
+    
+    // Finally switch to transactions tab
+    setActiveTab('transactions');
+    setError(null);
+  }, [fetchCustomerTransactions]);
+
+  // FIXED: Improved back navigation from transactions
+  const handleBackFromTransactions = useCallback(() => {
+    console.log('Going back from transactions');
+    
+    // Clear transaction data first
+    setTransactions([]);
+    setSelectedCustomer(null);
+    
+    // Then switch to customers tab
+    setActiveTab('customers');
     setError(null);
   }, []);
 
@@ -554,6 +593,14 @@ export default function ERPLedgerApp() {
     loadInitialData();
   }, [offlineMode, refreshAllData, calculateSummaryFromBalanceSheet, setOfflineMode]);
 
+  // FIXED: Add tab change effect to clear transactions
+  useEffect(() => {
+    // Clear transactions when switching away from transactions tab
+    if (activeTab !== 'transactions') {
+      setTransactions([]);
+    }
+  }, [activeTab]);
+
   // Mobile responsive breakpoint
   const [isMobile, setIsMobile] = useState(false);
 
@@ -572,7 +619,7 @@ export default function ERPLedgerApp() {
 
   // Render current tab content
   const renderTabContent = () => {
-    console.log('Rendering tab:', activeTab);
+    console.log('Rendering tab:', activeTab, 'Selected customer:', selectedCustomer);
     
     switch (activeTab) {
       case 'dashboard':
@@ -592,10 +639,7 @@ export default function ERPLedgerApp() {
             searchTerm={searchTerm}
             setSearchTerm={setSearchTerm}
             onAddCustomer={() => setShowAddCustomer(true)}
-            onViewCustomer={(name) => { 
-              fetchCustomerTransactions(name); 
-              handleTabChange('transactions');
-            }}
+            onViewCustomer={handleViewCustomer}
             onDeleteCustomer={deleteCustomer}
             offlineMode={offlineMode}
             isMobile={isMobile}
@@ -607,10 +651,7 @@ export default function ERPLedgerApp() {
             customer={selectedCustomer}
             transactions={transactions}
             onAddTransaction={() => setShowAddTransaction(true)}
-            onBack={() => {
-              setSelectedCustomer(null);
-              handleTabChange('customers');
-            }}
+            onBack={handleBackFromTransactions}
             onDeleteTransaction={deleteTransaction}
             offlineMode={offlineMode}
             isMobile={isMobile}
@@ -620,10 +661,7 @@ export default function ERPLedgerApp() {
         return (
           <BalanceSheetView
             balanceSheet={balanceSheet}
-            onViewCustomer={(name) => { 
-              fetchCustomerTransactions(name); 
-              handleTabChange('transactions');
-            }}
+            onViewCustomer={handleViewCustomer}
             isMobile={isMobile}
           />
         );
@@ -844,7 +882,7 @@ export default function ERPLedgerApp() {
   );
 }
 
-// Dashboard Component - Keep the same as before
+// Dashboard Component
 function DashboardView({ summary, customers, balanceSheet, topCustomers, isMobile }) {
   const stats = useMemo(() => [
     { 
@@ -943,7 +981,7 @@ function DashboardView({ summary, customers, balanceSheet, topCustomers, isMobil
   );
 }
 
-// Customers Component - Keep the same as before
+// Customers Component
 function CustomersView({ customers, searchTerm, setSearchTerm, onAddCustomer, onViewCustomer, onDeleteCustomer, offlineMode, isMobile }) {
   const [deleting, setDeleting] = useState(null);
 
@@ -1043,7 +1081,7 @@ function CustomersView({ customers, searchTerm, setSearchTerm, onAddCustomer, on
   );
 }
 
-// Transactions Component - Keep the same as before
+// Transactions Component
 function TransactionsView({ customer, transactions, onAddTransaction, onBack, onDeleteTransaction, offlineMode, isMobile }) {
   const [deleting, setDeleting] = useState(null);
 
@@ -1273,7 +1311,7 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack, on
   );
 }
 
-// Balance Sheet Component - Keep the same as before
+// Balance Sheet Component
 function BalanceSheetView({ balanceSheet, onViewCustomer, isMobile }) {
   return (
     <div className="space-y-4">
@@ -1371,7 +1409,7 @@ function BalanceSheetView({ balanceSheet, onViewCustomer, isMobile }) {
   );
 }
 
-// Add Customer Modal - Keep the same as before
+// Add Customer Modal
 function AddCustomerModal({ onClose, onSubmit, loading, isMobile }) {
   const [formData, setFormData] = useState({ 
     name: '', 
@@ -1461,7 +1499,7 @@ function AddCustomerModal({ onClose, onSubmit, loading, isMobile }) {
   );
 }
 
-// Add Transaction Modal - Keep the same as before
+// Add Transaction Modal
 function AddTransactionModal({ customers, selectedCustomer, onClose, onSubmit, loading, isMobile }) {
   const [formData, setFormData] = useState({
     customerName: selectedCustomer || '',
