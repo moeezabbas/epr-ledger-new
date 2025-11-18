@@ -1,153 +1,93 @@
 'use client'
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { AlertCircle, RefreshCw, Users, TrendingUp, TrendingDown, DollarSign, Search, Plus, Eye, X, Trash2, Download, Upload, Settings, Save, Menu, ChevronLeft } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { AlertCircle, RefreshCw, Users, TrendingUp, TrendingDown, DollarSign, Search, Plus, Eye, X, Trash2, Edit, Download, Wifi, WifiOff } from 'lucide-react';
 
 // API Configuration
 const API_URL = 'https://script.google.com/macros/s/AKfycbzkUag35Oir80bL6jRx2d_1MaopMs2BexJZaQrDoJO0bCLQONw1jfA79F8eSnyIT2Ef/exec';
 
-// Local storage keys
-const LOCAL_STORAGE_KEYS = {
-  CUSTOMERS: 'erp_customers_v2',
-  TRANSACTIONS: 'erp_transactions_v2_',
-  BALANCE_SHEET: 'erp_balance_sheet_v2',
-  SUMMARY: 'erp_summary_v2',
-  OFFLINE_MODE: 'erp_offline_mode',
-  PENDING_SYNC: 'erp_pending_sync_v2',
-  LAST_SYNC: 'erp_last_sync'
-};
-
-// Custom hook for local storage with performance optimization
-const useLocalStorage = (key, initialValue) => {
-  const [storedValue, setStoredValue] = useState(() => {
-    try {
-      if (typeof window === 'undefined') return initialValue;
-      const item = window.localStorage.getItem(key);
-      return item ? JSON.parse(item) : initialValue;
-    } catch (error) {
-      console.error(`Error reading localStorage key "${key}":`, error);
-      return initialValue;
-    }
-  });
-
-  const setValue = useCallback((value) => {
-    try {
-      setStoredValue(value);
-      if (typeof window !== 'undefined') {
-        window.localStorage.setItem(key, JSON.stringify(value));
-      }
-    } catch (error) {
-      console.error(`Error setting localStorage key "${key}":`, error);
-    }
-  }, [key]);
-
-  return [storedValue, setValue];
-};
-
-// Optimized data parser
-const DataParser = {
-  parseMoney: (value) => {
-    if (!value) return 0;
-    const str = value.toString();
-    const cleaned = str.replace(/Rs\.\s?/g, '').replace(/,/g, '').trim();
-    return parseFloat(cleaned) || 0;
-  },
-
-  parseNumber: (value) => {
-    if (!value || value === 'NaN' || value === '-') return 0;
-    return parseFloat(value.toString().replace(/,/g, '')) || 0;
-  },
-
-  cleanText: (value) => {
-    if (!value || value === 'NaN') return '';
-    return value.toString().trim();
-  }
-};
-
 export default function ERPLedgerApp() {
-  const [customers, setCustomers] = useLocalStorage(LOCAL_STORAGE_KEYS.CUSTOMERS, []);
-  const [balanceSheet, setBalanceSheet] = useLocalStorage(LOCAL_STORAGE_KEYS.BALANCE_SHEET, []);
-  const [summary, setSummary] = useLocalStorage(LOCAL_STORAGE_KEYS.SUMMARY, { totalDr: 0, totalCr: 0, netPosition: 0, status: 'BALANCED' });
+  const [customers, setCustomers] = useState([]);
+  const [balanceSheet, setBalanceSheet] = useState([]);
+  const [summary, setSummary] = useState({ totalDr: 0, totalCr: 0, netPosition: 0, status: 'BALANCED' });
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [searchTerm, setSearchTerm] = useState('');
-  const [autoRefresh, setAutoRefresh] = useState(false);
-  const [lastSync, setLastSync] = useLocalStorage(LOCAL_STORAGE_KEYS.LAST_SYNC, null);
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [lastSync, setLastSync] = useState(null);
   const [showAddCustomer, setShowAddCustomer] = useState(false);
   const [showAddTransaction, setShowAddTransaction] = useState(false);
-  const [offlineMode, setOfflineMode] = useLocalStorage(LOCAL_STORAGE_KEYS.OFFLINE_MODE, false);
-  const [showAdminPanel, setShowAdminPanel] = useState(false);
-  const [pendingSync, setPendingSync] = useLocalStorage(LOCAL_STORAGE_KEYS.PENDING_SYNC, []);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [showEditTransaction, setShowEditTransaction] = useState(false);
+  const [editingTransaction, setEditingTransaction] = useState(null);
+  const [isOnline, setIsOnline] = useState(true);
+  const [offlineData, setOfflineData] = useState(null);
 
-  // Memoized calculations
-  const filteredCustomers = useMemo(() => {
-    return customers.filter(c =>
-      c.name.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-  }, [customers, searchTerm]);
-
-  const topCustomers = useMemo(() => {
-    return balanceSheet
-      .sort((a, b) => Math.abs(b.balance) - Math.abs(a.balance))
-      .slice(0, 10);
-  }, [balanceSheet]);
-
-  // Calculate DR/CR summary from balance sheet
-  const calculateSummaryFromBalanceSheet = useCallback(() => {
-    const totalDr = balanceSheet
-      .filter(item => item.drCr === 'DR')
-      .reduce((sum, item) => sum + (Math.abs(item.balance) || 0), 0);
+  // Offline mode detection
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
     
-    const totalCr = balanceSheet
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // Load offline data
+  useEffect(() => {
+    const stored = localStorage.getItem('erp_offline_data');
+    if (stored) {
+      const data = JSON.parse(stored);
+      setOfflineData(data);
+      if (!isOnline) {
+        setCustomers(data.customers || []);
+        setBalanceSheet(data.balanceSheet || []);
+        setSummary(data.summary || { totalDr: 0, totalCr: 0, netPosition: 0, status: 'BALANCED' });
+      }
+    }
+  }, [isOnline]);
+
+  // Save to offline storage
+  const saveOfflineData = (data) => {
+    const offlineCache = {
+      customers: data.customers || customers,
+      balanceSheet: data.balanceSheet || balanceSheet,
+      summary: data.summary || summary,
+      timestamp: new Date().toISOString()
+    };
+    localStorage.setItem('erp_offline_data', JSON.stringify(offlineCache));
+    setOfflineData(offlineCache);
+  };
+
+  // FIXED: Calculate DR/CR summary from balance sheet
+  const calculateSummaryFromBalanceSheet = (balances) => {
+    const totalDr = balances
+      .filter(item => item.drCr === 'DR')
+      .reduce((sum, item) => sum + (Math.abs(parseFloat(item.balance)) || 0), 0);
+    
+    const totalCr = balances
       .filter(item => item.drCr === 'CR')
-      .reduce((sum, item) => sum + (Math.abs(item.balance) || 0), 0);
+      .reduce((sum, item) => sum + (Math.abs(parseFloat(item.balance)) || 0), 0);
     
     const netPosition = totalDr - totalCr;
     const status = netPosition > 0 ? 'NET DR' : netPosition < 0 ? 'NET CR' : 'BALANCED';
     
-    const newSummary = {
+    return {
       totalDr,
       totalCr,
       netPosition: Math.abs(netPosition),
       status
     };
-    
-    setSummary(newSummary);
-    return newSummary;
-  }, [balanceSheet, setSummary]);
+  };
 
-  // Fixed balance calculation function
-  const calculateRunningBalance = useCallback((transactions) => {
-    let runningBalance = 0;
-    
-    return transactions.map((txn, index) => {
-      const debit = DataParser.parseMoney(txn.debit);
-      const credit = DataParser.parseMoney(txn.credit);
-      
-      if (index === 0) {
-        runningBalance = DataParser.parseMoney(txn.balance);
-      } else {
-        runningBalance = runningBalance + debit - credit;
-      }
-      
-      const drCr = runningBalance >= 0 ? 'DR' : 'CR';
-      const absoluteBalance = Math.abs(runningBalance);
-      
-      return {
-        ...txn,
-        calculatedBalance: absoluteBalance,
-        calculatedDrCr: drCr,
-        runningBalance: runningBalance
-      };
-    });
-  }, []);
-
-  // Transaction summary calculation
-  const calculateTransactionSummary = useCallback((transactions) => {
+  // FIXED: Transaction summary calculation
+  const calculateTransactionSummary = (transactions) => {
     if (!transactions || transactions.length === 0) {
       return {
         totalDebit: 0,
@@ -159,8 +99,8 @@ export default function ERPLedgerApp() {
       };
     }
     
-    const totalDebit = transactions.reduce((sum, txn) => sum + DataParser.parseMoney(txn.debit), 0);
-    const totalCredit = transactions.reduce((sum, txn) => sum + DataParser.parseMoney(txn.credit), 0);
+    const totalDebit = transactions.reduce((sum, txn) => sum + (parseFloat(txn.debit) || 0), 0);
+    const totalCredit = transactions.reduce((sum, txn) => sum + (parseFloat(txn.credit) || 0), 0);
     
     const lastTransaction = transactions[transactions.length - 1];
     const finalBalance = lastTransaction.calculatedBalance || 0;
@@ -177,148 +117,151 @@ export default function ERPLedgerApp() {
       netBalance: Math.abs(netBalance),
       netDRCR: netBalance >= 0 ? 'DR' : 'CR'
     };
-  }, []);
+  };
 
-  // Toggle offline mode
-  const toggleOfflineMode = useCallback(async (mode) => {
-    setOfflineMode(mode);
-    if (!mode && pendingSync.length > 0) {
-      await syncPendingChanges();
-    }
-  }, [pendingSync, setOfflineMode]);
-
-  // Add to pending sync
-  const addToPendingSync = useCallback((action, data) => {
-    const newPending = [...pendingSync, { 
-      action, 
-      data, 
-      timestamp: new Date().toISOString(),
-      id: Date.now().toString()
-    }];
-    setPendingSync(newPending);
-  }, [pendingSync, setPendingSync]);
-
-  // Sync pending changes
-  const syncPendingChanges = useCallback(async () => {
-    if (pendingSync.length === 0 || offlineMode) return;
-
-    setLoading(true);
-    const successes = [];
+  // FIXED: Proper running balance calculation
+  const calculateRunningBalance = (transactions) => {
+    let runningBalance = 0;
     
-    // Process sync in batches for better performance
-    const batchSize = 5;
-    for (let i = 0; i < pendingSync.length; i += batchSize) {
-      const batch = pendingSync.slice(i, i + batchSize);
+    return transactions.map((txn, index) => {
+      const debit = parseFloat(txn.debit) || 0;
+      const credit = parseFloat(txn.credit) || 0;
       
-      const batchResults = await Promise.allSettled(
-        batch.map(async (item) => {
-          try {
-            // Simulate API calls - implement actual API calls here
-            await new Promise(resolve => setTimeout(resolve, 100));
-            return { ...item, success: true };
-          } catch (error) {
-            return { ...item, success: false, error };
-          }
-        })
-      );
-      
-      successes.push(...batchResults.filter(result => result.value?.success).map(result => result.value));
-    }
-
-    // Update pending sync list
-    const newPending = pendingSync.filter(item => 
-      !successes.some(success => success.id === item.id)
-    );
-    setPendingSync(newPending);
-
-    if (successes.length > 0) {
-      await refreshAllData();
-    }
-
-    setLoading(false);
-  }, [pendingSync, offlineMode, setPendingSync]);
-
-  // Optimized data fetching with caching
-  const fetchWithCache = useCallback(async (url, cacheKey, setData) => {
-    // Check cache first
-    const cached = localStorage.getItem(cacheKey);
-    const cacheTime = localStorage.getItem(`${cacheKey}_time`);
-    const isCacheValid = cacheTime && (Date.now() - parseInt(cacheTime)) < 300000; // 5 minutes
-    
-    if (isCacheValid && cached) {
-      setData(JSON.parse(cached));
-      return JSON.parse(cached);
-    }
-
-    try {
-      const response = await fetch(url, {
-        method: 'GET',
-        mode: 'cors',
-        headers: { 'Accept': 'application/json' },
-        signal: AbortSignal.timeout(10000) // 10 second timeout
-      });
-      
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        const resultData = data[cacheKey.includes('customers') ? 'customers' : 'balances'] || [];
-        setData(resultData);
-        // Cache the result
-        localStorage.setItem(cacheKey, JSON.stringify(resultData));
-        localStorage.setItem(`${cacheKey}_time`, Date.now().toString());
-        return resultData;
+      if (index === 0 && txn.description?.toLowerCase().includes('opening balance')) {
+        runningBalance = debit - credit;
+      } else {
+        runningBalance = runningBalance + debit - credit;
       }
-      throw new Error(data.error || 'Failed to fetch data');
-    } catch (err) {
-      if (cached && isCacheValid) {
-        setData(JSON.parse(cached));
-        return JSON.parse(cached);
-      }
-      throw err;
-    }
-  }, []);
+      
+      const drCr = runningBalance >= 0 ? 'DR' : 'CR';
+      const absoluteBalance = Math.abs(runningBalance);
+      
+      return {
+        ...txn,
+        calculatedBalance: absoluteBalance,
+        calculatedDrCr: drCr,
+        runningBalance: runningBalance
+      };
+    });
+  };
 
-  // Main data refresh
   const refreshAllData = useCallback(async () => {
-    if (offlineMode) {
-      calculateSummaryFromBalanceSheet();
+    if (!isOnline) {
+      setError('You are offline. Showing cached data.');
       return;
     }
 
     setLoading(true);
     setError(null);
-    
     try {
-      await Promise.all([
-        fetchWithCache(`${API_URL}?method=getCustomers`, LOCAL_STORAGE_KEYS.CUSTOMERS, setCustomers),
-        fetchWithCache(`${API_URL}?method=getBalanceSheet`, LOCAL_STORAGE_KEYS.BALANCE_SHEET, setBalanceSheet)
+      const [customersData, balanceData] = await Promise.all([
+        fetchCustomers(), 
+        fetchBalanceSheet()
       ]);
       
-      calculateSummaryFromBalanceSheet();
+      // Calculate summary from balance sheet
+      const calculatedSummary = calculateSummaryFromBalanceSheet(balanceData);
+      setSummary(calculatedSummary);
+      
+      // Save to offline storage
+      saveOfflineData({
+        customers: customersData,
+        balanceSheet: balanceData,
+        summary: calculatedSummary
+      });
+      
       setLastSync(new Date());
     } catch (err) {
       setError('Failed to refresh data');
-      console.error('Refresh error:', err);
     } finally {
       setLoading(false);
     }
-  }, [offlineMode, fetchWithCache, calculateSummaryFromBalanceSheet, setLastSync, setCustomers, setBalanceSheet]);
+  }, [isOnline]);
 
-  // FIXED: Correct transaction fetching with proper column mapping
-  const fetchCustomerTransactions = useCallback(async (customerName) => {
-    if (offlineMode) {
-      const customerKey = `${LOCAL_STORAGE_KEYS.TRANSACTIONS}${customerName}`;
-      const localTransactions = JSON.parse(localStorage.getItem(customerKey) || '[]');
-      const transactionsWithBalance = calculateRunningBalance(localTransactions);
-      const summary = calculateTransactionSummary(transactionsWithBalance);
+  const fetchCustomers = async () => {
+    try {
+      let allCustomers = [];
+      let offset = 0;
+      const limit = 50;
+      let hasMore = true;
       
-      setTransactions(transactionsWithBalance);
-      setSelectedCustomer({ name: customerName, summary });
-      return transactionsWithBalance;
+      while (hasMore) {
+        const response = await fetch(`${API_URL}?method=getCustomersPaginated&limit=${limit}&offset=${offset}`, {
+          method: 'GET',
+          mode: 'cors',
+          headers: { 'Accept': 'application/json' }
+        });
+        
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        
+        const contentType = response.headers.get('content-type');
+        if (!contentType?.includes('application/json')) {
+          return await fetchCustomersNonPaginated();
+        }
+        
+        const data = await response.json();
+        if (data.success) {
+          allCustomers = allCustomers.concat(data.customers || []);
+          hasMore = data.hasMore;
+          offset += limit;
+          setCustomers([...allCustomers]);
+        } else {
+          throw new Error(data.error || 'Failed to fetch customers');
+        }
+      }
+      
+      return allCustomers;
+    } catch (err) {
+      return await fetchCustomersNonPaginated();
     }
+  };
 
+  const fetchCustomersNonPaginated = async () => {
+    try {
+      const response = await fetch(`${API_URL}?method=getCustomers`, {
+        method: 'GET',
+        mode: 'cors',
+        headers: { 'Accept': 'application/json' }
+      });
+      
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      
+      const data = await response.json();
+      if (data.success) {
+        setCustomers(data.customers || []);
+        return data.customers;
+      }
+      throw new Error(data.error || 'Failed to fetch customers');
+    } catch (err) {
+      setError(`Failed to load customers: ${err.message}`);
+      return [];
+    }
+  };
+
+  const fetchBalanceSheet = async () => {
+    try {
+      const response = await fetch(`${API_URL}?method=getBalanceSheet`, {
+        method: 'GET',
+        mode: 'cors',
+        headers: { 'Accept': 'application/json' }
+      });
+      
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      const data = await response.json();
+      
+      if (data.success) {
+        setBalanceSheet(data.balances || []);
+        return data.balances;
+      }
+      throw new Error(data.error || 'Failed to fetch balance sheet');
+    } catch (err) {
+      console.error('Balance sheet error:', err);
+      return [];
+    }
+  };
+
+  // FIXED: Proper column mapping based on Google Sheets structure
+  const fetchCustomerTransactions = async (customerName) => {
     try {
       setLoading(true);
       setError(null);
@@ -329,8 +272,7 @@ export default function ERPLedgerApp() {
       const response = await fetch(url, {
         method: 'GET',
         mode: 'cors',
-        headers: { 'Accept': 'application/json' },
-        signal: AbortSignal.timeout(15000) // Increased timeout
+        headers: { 'Accept': 'application/json' }
       });
       
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
@@ -338,446 +280,384 @@ export default function ERPLedgerApp() {
       const data = await response.json();
       
       if (data.success) {
-        // CORRECT COLUMN MAPPING - Based on actual Google Sheets structure
         const validTransactions = (data.transactions || []).filter(txn => {
-          if (txn.description === 'Description' || txn.sn === 'S.N' || txn.date === 'Date') return false;
-          if (txn.item === 'NaN' || txn.rate === 'Rs. NaN' || txn.weightQty === 'NaN') return false;
-          if (!txn.date || txn.date === '-' || txn.date === '') return false;
-          if (txn.description?.includes('LEDGER')) return false;
+          if (txn.description === 'Description' || txn.sn === 'S.N' || txn.date === 'Date') {
+            return false;
+          }
+          if (!txn.date || txn.date === '-' || txn.date === '') {
+            return false;
+          }
           return true;
         }).map((txn, index) => {
-          // Parse and clean data
-          const transactionType = DataParser.cleanText(txn.transactionType);
-          let paymentMethod = DataParser.cleanText(txn.paymentMethod);
-          let bankName = DataParser.cleanText(txn.bankName);
-          const chequeNo = DataParser.cleanText(txn.chequeNo);
-
-          // Fix column mapping issues
-          if (bankName && (bankName.includes('Cash') || bankName.includes('Bank') || bankName.includes('Cheque'))) {
-            paymentMethod = bankName;
-            bankName = '-';
-          }
-
-          if (chequeNo && (chequeNo.includes('Bank') || chequeNo.length > 10)) {
-            bankName = chequeNo;
-          }
-
-          // Auto-detect payment method from transaction type
-          if (!paymentMethod || paymentMethod === '-') {
-            if (transactionType.includes('Cash')) paymentMethod = 'Cash';
-            else if (transactionType.includes('Bank')) paymentMethod = 'Bank Transfer';
-            else if (transactionType.includes('Cheque')) paymentMethod = 'Cheque';
-          }
-
+          const debit = txn.debit ? parseFloat(txn.debit.toString().replace(/[^\d.-]/g, '')) || 0 : 0;
+          const credit = txn.credit ? parseFloat(txn.credit.toString().replace(/[^\d.-]/g, '')) || 0 : 0;
+          
           return {
             ...txn,
-            id: txn.id || `txn_${Date.now()}_${index}`,
             sn: txn.sn && !isNaN(txn.sn) ? parseInt(txn.sn) : index + 1,
-            debit: DataParser.parseMoney(txn.debit),
-            credit: DataParser.parseMoney(txn.credit),
-            balance: DataParser.parseMoney(txn.balance),
-            weightQty: DataParser.cleanText(txn.weightQty),
-            rate: DataParser.cleanText(txn.rate?.replace('Rs. ', '')),
-            item: DataParser.cleanText(txn.item),
-            transactionType: transactionType === 'Sale/Purchase' ? 'Sale' : transactionType,
-            paymentMethod,
-            bankName: bankName || '-',
-            chequeNo: chequeNo || '-',
-            customerName
+            debit,
+            credit,
+            weightQty: txn.weightQty && txn.weightQty !== 'NaN' ? txn.weightQty : '',
+            rate: txn.rate && txn.rate !== 'Rs. NaN' ? txn.rate : '',
+            item: txn.item && txn.item !== 'NaN' ? txn.item : '',
+            transactionType: txn.transactionType || '-',
+            paymentMethod: txn.paymentMethod || '-',
+            bankName: txn.bankName || '-',
+            chequeNo: txn.chequeNo || '-'
           };
         });
-
-        const transactionsWithBalance = calculateRunningBalance(validTransactions);
-        const summary = calculateTransactionSummary(transactionsWithBalance);
         
-        // Cache transactions
-        const customerKey = `${LOCAL_STORAGE_KEYS.TRANSACTIONS}${customerName}`;
-        localStorage.setItem(customerKey, JSON.stringify(transactionsWithBalance));
+        const transactionsWithCorrectBalance = calculateRunningBalance(validTransactions);
+        setTransactions(transactionsWithCorrectBalance);
         
-        setTransactions(transactionsWithBalance);
+        const summary = calculateTransactionSummary(transactionsWithCorrectBalance);
         setSelectedCustomer({ name: customerName, summary });
-        return transactionsWithBalance;
+        
+        return transactionsWithCorrectBalance;
       }
       throw new Error(data.error || 'Failed to fetch transactions');
     } catch (err) {
-      console.error('Transaction fetch error:', err);
       setError('Failed to fetch transactions: ' + err.message);
-      
-      // Don't clear selected customer on error - allow retry
-      setSelectedCustomer({ name: customerName });
-      setTransactions([]);
-      
       return [];
     } finally {
       setLoading(false);
     }
-  }, [offlineMode, calculateRunningBalance, calculateTransactionSummary]);
+  };
 
-  // Create operations
-  const createCustomer = useCallback(async (customerData) => {
-    const newCustomer = {
-      ...customerData,
-      id: `cust_${Date.now()}`,
-      createdDate: new Date().toISOString(),
-      status: 'Active',
-      sheetName: customerData.name
-    };
-    
-    const newCustomers = [...customers, newCustomer];
-    setCustomers(newCustomers);
-    addToPendingSync('createCustomer', customerData);
-    
-    return { success: true };
-  }, [customers, setCustomers, addToPendingSync]);
+  const createCustomer = async (customerData) => {
+    try {
+      setLoading(true);
+      const params = new URLSearchParams({
+        method: 'createCustomer',
+        customerName: customerData.name,
+        openingBalance: customerData.openingBalance || 0,
+        color: customerData.color || 'none'
+      });
 
-  const createTransaction = useCallback(async (transactionData) => {
-    const newTransaction = {
-      ...transactionData,
-      id: `txn_${Date.now()}`,
-      timestamp: new Date().toISOString()
-    };
-    
-    const customerKey = `${LOCAL_STORAGE_KEYS.TRANSACTIONS}${transactionData.customerName}`;
-    const existingTransactions = JSON.parse(localStorage.getItem(customerKey) || '[]');
-    const updatedTransactions = [...existingTransactions, newTransaction];
-    localStorage.setItem(customerKey, JSON.stringify(updatedTransactions));
-    
-    addToPendingSync('createTransaction', transactionData);
-    
-    // Update UI if viewing same customer
-    if (selectedCustomer && selectedCustomer.name === transactionData.customerName) {
-      const transactionsWithBalance = calculateRunningBalance(updatedTransactions);
-      const summary = calculateTransactionSummary(transactionsWithBalance);
-      setTransactions(transactionsWithBalance);
-      setSelectedCustomer(prev => ({ ...prev, summary }));
+      const response = await fetch(`${API_URL}?${params.toString()}`, {
+        method: 'GET',
+        mode: 'cors',
+        headers: { 'Accept': 'application/json' }
+      });
+
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      const data = await response.json();
+
+      if (data.success) {
+        await refreshAllData();
+        setShowAddCustomer(false);
+        return { success: true };
+      }
+      throw new Error(data.error || 'Failed to create customer');
+    } catch (err) {
+      setError('Failed to create customer: ' + err.message);
+      return { success: false, error: err.message };
+    } finally {
+      setLoading(false);
     }
-    
-    return { success: true };
-  }, [selectedCustomer, calculateRunningBalance, calculateTransactionSummary, addToPendingSync]);
+  };
 
-  // Delete operations
-  const deleteCustomer = useCallback(async (customerName) => {
-    const newCustomers = customers.filter(c => c.name !== customerName);
-    setCustomers(newCustomers);
-    addToPendingSync('deleteCustomer', { customerName });
-    return { success: true };
-  }, [customers, setCustomers, addToPendingSync]);
-
-  const deleteTransaction = useCallback(async (transactionId, customerName) => {
-    const customerKey = `${LOCAL_STORAGE_KEYS.TRANSACTIONS}${customerName}`;
-    const existingTransactions = JSON.parse(localStorage.getItem(customerKey) || '[]');
-    const updatedTransactions = existingTransactions.filter(t => t.id !== transactionId);
-    localStorage.setItem(customerKey, JSON.stringify(updatedTransactions));
-    addToPendingSync('deleteTransaction', { transactionId, customerName });
-    
-    if (selectedCustomer && selectedCustomer.name === customerName) {
-      const transactionsWithBalance = calculateRunningBalance(updatedTransactions);
-      const summary = calculateTransactionSummary(transactionsWithBalance);
-      setTransactions(transactionsWithBalance);
-      setSelectedCustomer(prev => ({ ...prev, summary }));
+  const deleteCustomer = async (customerName) => {
+    if (!confirm(`Are you sure you want to delete ${customerName}? This action cannot be undone.`)) {
+      return;
     }
-    
-    return { success: true };
-  }, [selectedCustomer, calculateRunningBalance, calculateTransactionSummary, addToPendingSync]);
 
-  // Export/Import
-  const exportData = useCallback(() => {
-    const data = {
-      customers,
-      balanceSheet,
-      summary,
-      exportDate: new Date().toISOString(),
-      version: '2.0'
-    };
+    try {
+      setLoading(true);
+      const params = new URLSearchParams({
+        method: 'deleteCustomer',
+        customerName: customerName
+      });
+
+      const response = await fetch(`${API_URL}?${params.toString()}`, {
+        method: 'GET',
+        mode: 'cors',
+        headers: { 'Accept': 'application/json' }
+      });
+
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      const data = await response.json();
+
+      if (data.success) {
+        await refreshAllData();
+        if (selectedCustomer?.name === customerName) {
+          setSelectedCustomer(null);
+          setActiveTab('customers');
+        }
+        return { success: true };
+      }
+      throw new Error(data.error || 'Failed to delete customer');
+    } catch (err) {
+      setError('Failed to delete customer: ' + err.message);
+      return { success: false, error: err.message };
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const createTransaction = async (transactionData) => {
+    try {
+      setLoading(true);
+      
+      const apiData = {
+        method: 'createTransaction',
+        customerName: transactionData.customerName,
+        date: transactionData.date,
+        description: transactionData.description,
+        item: transactionData.item,
+        weightQty: transactionData.weightQty,
+        rate: transactionData.rate,
+        transactionType: transactionData.transactionType,
+        paymentMethod: transactionData.paymentMethod,
+        bankName: transactionData.bankName,
+        chequeNo: transactionData.chequeNo,
+        amount: transactionData.amount,
+        drCr: transactionData.drCr
+      };
+
+      const params = new URLSearchParams(apiData);
+      const response = await fetch(`${API_URL}?${params.toString()}`, {
+        method: 'GET',
+        mode: 'cors',
+        headers: { 'Accept': 'application/json' }
+      });
+
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      const data = await response.json();
+
+      if (data.success) {
+        await refreshAllData();
+        if (selectedCustomer) {
+          await fetchCustomerTransactions(selectedCustomer.name);
+        }
+        setShowAddTransaction(false);
+        return { success: true };
+      }
+      throw new Error(data.error || 'Failed to create transaction');
+    } catch (err) {
+      setError('Failed to create transaction: ' + err.message);
+      return { success: false, error: err.message };
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const updateTransaction = async (transactionData) => {
+    try {
+      setLoading(true);
+      
+      const apiData = {
+        method: 'updateTransaction',
+        customerName: transactionData.customerName,
+        sn: transactionData.sn,
+        date: transactionData.date,
+        description: transactionData.description,
+        item: transactionData.item,
+        weightQty: transactionData.weightQty,
+        rate: transactionData.rate,
+        transactionType: transactionData.transactionType,
+        paymentMethod: transactionData.paymentMethod,
+        bankName: transactionData.bankName,
+        chequeNo: transactionData.chequeNo,
+        amount: transactionData.amount,
+        drCr: transactionData.drCr
+      };
+
+      const params = new URLSearchParams(apiData);
+      const response = await fetch(`${API_URL}?${params.toString()}`, {
+        method: 'GET',
+        mode: 'cors',
+        headers: { 'Accept': 'application/json' }
+      });
+
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      const data = await response.json();
+
+      if (data.success) {
+        await refreshAllData();
+        if (selectedCustomer) {
+          await fetchCustomerTransactions(selectedCustomer.name);
+        }
+        setShowEditTransaction(false);
+        setEditingTransaction(null);
+        return { success: true };
+      }
+      throw new Error(data.error || 'Failed to update transaction');
+    } catch (err) {
+      setError('Failed to update transaction: ' + err.message);
+      return { success: false, error: err.message };
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const deleteTransaction = async (customerName, sn) => {
+    if (!confirm('Are you sure you want to delete this transaction?')) {
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const params = new URLSearchParams({
+        method: 'deleteTransaction',
+        customerName: customerName,
+        sn: sn
+      });
+
+      const response = await fetch(`${API_URL}?${params.toString()}`, {
+        method: 'GET',
+        mode: 'cors',
+        headers: { 'Accept': 'application/json' }
+      });
+
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      const data = await response.json();
+
+      if (data.success) {
+        await refreshAllData();
+        if (selectedCustomer) {
+          await fetchCustomerTransactions(selectedCustomer.name);
+        }
+        return { success: true };
+      }
+      throw new Error(data.error || 'Failed to delete transaction');
+    } catch (err) {
+      setError('Failed to delete transaction: ' + err.message);
+      return { success: false, error: err.message };
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const exportToCSV = () => {
+    if (!selectedCustomer || transactions.length === 0) return;
     
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const headers = ['S.N', 'Date', 'Description', 'Item', 'Weight/Qty', 'Rate', 'Transaction Type', 'Payment Method', 'Bank Name', 'Cheque No', 'Debit', 'Credit', 'Balance', 'DR/CR'];
+    const rows = transactions.map(txn => [
+      txn.sn,
+      txn.date,
+      txn.description,
+      txn.item,
+      txn.weightQty,
+      txn.rate,
+      txn.transactionType,
+      txn.paymentMethod,
+      txn.bankName,
+      txn.chequeNo,
+      txn.debit,
+      txn.credit,
+      txn.calculatedBalance,
+      txn.calculatedDrCr
+    ]);
+    
+    const csv = [headers, ...rows].map(row => row.join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `erp-backup-${new Date().toISOString().split('T')[0]}.json`;
-    document.body.appendChild(a);
+    a.download = `${selectedCustomer.name}_ledger.csv`;
     a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }, [customers, balanceSheet, summary]);
+  };
 
-  const importData = useCallback((event) => {
-    const file = event.target.files[0];
-    if (!file) return;
-    
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const data = JSON.parse(e.target.result);
-        if (data.customers) setCustomers(data.customers);
-        if (data.balanceSheet) setBalanceSheet(data.balanceSheet);
-        if (data.summary) setSummary(data.summary);
-        alert('Data imported successfully!');
-      } catch (err) {
-        alert('Error importing data: ' + err.message);
-      }
-    };
-    reader.readAsText(file);
-  }, [setCustomers, setBalanceSheet, setSummary]);
-
-  // FIXED: Improved tab switching function
-  const handleTabChange = useCallback((tab) => {
-    console.log('Changing tab to:', tab);
-    
-    // Clear transactions and selected customer when leaving transactions tab
-    if (activeTab === 'transactions' && tab !== 'transactions') {
-      setTransactions([]);
-      setSelectedCustomer(null);
-    }
-    
-    setActiveTab(tab);
-    setMobileMenuOpen(false);
-    setError(null);
-  }, [activeTab]);
-
-  // FIXED: Improved customer view function
-  const handleViewCustomer = useCallback((customerName) => {
-    console.log('Viewing customer:', customerName);
-    
-    // First set the selected customer
-    setSelectedCustomer({ name: customerName });
-    
-    // Then fetch transactions
-    fetchCustomerTransactions(customerName);
-    
-    // Finally switch to transactions tab
-    setActiveTab('transactions');
-    setError(null);
-  }, [fetchCustomerTransactions]);
-
-  // FIXED: Improved back navigation from transactions
-  const handleBackFromTransactions = useCallback(() => {
-    console.log('Going back from transactions');
-    
-    // Clear transaction data first
-    setTransactions([]);
-    setSelectedCustomer(null);
-    
-    // Then switch to customers tab
-    setActiveTab('customers');
-    setError(null);
-  }, []);
-
-  // Effects
   useEffect(() => {
-    if (autoRefresh && !offlineMode) {
-      const interval = setInterval(refreshAllData, 60000);
+    if (autoRefresh && isOnline) {
+      const interval = setInterval(refreshAllData, 30000);
       return () => clearInterval(interval);
     }
-  }, [autoRefresh, offlineMode, refreshAllData]);
+  }, [autoRefresh, isOnline, refreshAllData]);
 
   useEffect(() => {
     const loadInitialData = async () => {
       setLoading(true);
-      if (offlineMode) {
-        calculateSummaryFromBalanceSheet();
-        setLoading(false);
-        return;
-      }
+      setError(null);
       
       try {
+        if (!isOnline) {
+          setError('You are offline. Showing cached data.');
+          return;
+        }
+
+        const testResponse = await fetch(`${API_URL}?method=ping`, {
+          method: 'GET',
+          mode: 'cors',
+          headers: { 'Accept': 'application/json' }
+        }).catch(() => null);
+        
+        if (!testResponse || !testResponse.ok) {
+          setError(`⚠️ Cannot connect to API`);
+          setLoading(false);
+          return;
+        }
+        
         await refreshAllData();
       } catch (err) {
-        setOfflineMode(true);
-        calculateSummaryFromBalanceSheet();
+        setError(`Initial load failed: ${err.message}`);
       } finally {
         setLoading(false);
       }
     };
     
     loadInitialData();
-  }, [offlineMode, refreshAllData, calculateSummaryFromBalanceSheet, setOfflineMode]);
+  }, [refreshAllData, isOnline]);
 
-  // FIXED: Add tab change effect to clear transactions
-  useEffect(() => {
-    // Clear transactions when switching away from transactions tab
-    if (activeTab !== 'transactions') {
-      setTransactions([]);
-    }
-  }, [activeTab]);
-
-  // Mobile responsive breakpoint
-  const [isMobile, setIsMobile] = useState(false);
-
-  useEffect(() => {
-    const checkMobile = () => {
-      setIsMobile(window.innerWidth < 768);
-    };
-    
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    
-    return () => {
-      window.removeEventListener('resize', checkMobile);
-    };
-  }, []);
-
-  // Render current tab content
-  const renderTabContent = () => {
-    console.log('Rendering tab:', activeTab, 'Selected customer:', selectedCustomer);
-    
-    switch (activeTab) {
-      case 'dashboard':
-        return (
-          <DashboardView 
-            summary={summary} 
-            customers={customers} 
-            balanceSheet={balanceSheet}
-            topCustomers={topCustomers}
-            isMobile={isMobile}
-          />
-        );
-      case 'customers':
-        return (
-          <CustomersView
-            customers={filteredCustomers}
-            searchTerm={searchTerm}
-            setSearchTerm={setSearchTerm}
-            onAddCustomer={() => setShowAddCustomer(true)}
-            onViewCustomer={handleViewCustomer}
-            onDeleteCustomer={deleteCustomer}
-            offlineMode={offlineMode}
-            isMobile={isMobile}
-          />
-        );
-      case 'transactions':
-        return (
-          <TransactionsView
-            customer={selectedCustomer}
-            transactions={transactions}
-            onAddTransaction={() => setShowAddTransaction(true)}
-            onBack={handleBackFromTransactions}
-            onDeleteTransaction={deleteTransaction}
-            offlineMode={offlineMode}
-            isMobile={isMobile}
-          />
-        );
-      case 'balance-sheet':
-        return (
-          <BalanceSheetView
-            balanceSheet={balanceSheet}
-            onViewCustomer={handleViewCustomer}
-            isMobile={isMobile}
-          />
-        );
-      default:
-        return (
-          <DashboardView 
-            summary={summary} 
-            customers={customers} 
-            balanceSheet={balanceSheet}
-            topCustomers={topCustomers}
-            isMobile={isMobile}
-          />
-        );
-    }
-  };
+  const filteredCustomers = customers.filter(c =>
+    c.name.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6">
-          <div className="flex justify-between items-center py-3">
-            <div className="flex items-center gap-3">
-              {isMobile && activeTab !== 'dashboard' && (
-                <button
-                  onClick={() => handleTabChange('dashboard')}
-                  className="p-2 text-gray-600 hover:text-gray-900"
-                >
-                  <ChevronLeft className="w-5 h-5" />
-                </button>
-              )}
-              <div>
-                <h1 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-                  ERP Ledger
-                </h1>
-                <p className="text-xs text-gray-500">
-                  {offlineMode ? '🔴 Offline' : '🟢 Online'} • 
-                  {lastSync && ` Synced: ${new Date(lastSync).toLocaleTimeString()}`}
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-purple-50 to-pink-50">
+      <header className="bg-white shadow-lg border-b-4 border-blue-500">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+          <div className="flex justify-between items-center">
+            <div>
+              <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                ERP Ledger System
+              </h1>
+              <div className="flex items-center gap-3 mt-1">
+                <p className="text-sm text-gray-600">
+                  {lastSync && `Last sync: ${lastSync.toLocaleTimeString()}`}
                 </p>
+                {isOnline ? (
+                  <span className="flex items-center gap-1 text-green-600 text-sm">
+                    <Wifi className="w-4 h-4" />
+                    Online
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1 text-orange-600 text-sm">
+                    <WifiOff className="w-4 h-4" />
+                    Offline Mode
+                  </span>
+                )}
               </div>
             </div>
-            
-            <div className="flex items-center gap-2">
-              {!isMobile && (
-                <>
-                  <button
-                    onClick={() => setShowAdminPanel(!showAdminPanel)}
-                    className={`p-2 rounded-lg transition-all ${
-                      showAdminPanel ? 'bg-purple-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                    }`}
-                  >
-                    <Settings className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => toggleOfflineMode(!offlineMode)}
-                    className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                      offlineMode ? 'bg-red-500 text-white' : 'bg-green-500 text-white'
-                    }`}
-                  >
-                    {offlineMode ? 'Offline' : 'Online'}
-                  </button>
-                </>
-              )}
-              
+            <div className="flex gap-3">
               <button
-                onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-                className="p-2 text-gray-600 hover:text-gray-900 lg:hidden"
+                onClick={() => setAutoRefresh(!autoRefresh)}
+                disabled={!isOnline}
+                className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                  autoRefresh ? 'bg-green-500 text-white hover:bg-green-600' : 'bg-gray-300 text-gray-700 hover:bg-gray-400'
+                } disabled:opacity-50`}
               >
-                <Menu className="w-5 h-5" />
+                Auto-Sync: {autoRefresh ? 'ON' : 'OFF'}
               </button>
-              
               <button
                 onClick={refreshAllData}
-                disabled={loading}
-                className="p-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-all disabled:opacity-50"
+                disabled={loading || !isOnline}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-all disabled:opacity-50"
               >
                 <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                Refresh
               </button>
             </div>
           </div>
 
-          {/* Admin Panel */}
-          {showAdminPanel && !isMobile && (
-            <div className="pb-3">
-              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-                <div className="flex flex-wrap gap-2 items-center justify-between">
-                  <span className="text-sm font-medium text-yellow-800">Admin Panel</span>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={exportData}
-                      className="flex items-center gap-1 px-2 py-1 bg-blue-500 text-white rounded text-sm hover:bg-blue-600"
-                    >
-                      <Download className="w-3 h-3" />
-                      Export
-                    </button>
-                    <label className="flex items-center gap-1 px-2 py-1 bg-green-500 text-white rounded text-sm hover:bg-green-600 cursor-pointer">
-                      <Upload className="w-3 h-3" />
-                      Import
-                      <input type="file" accept=".json" onChange={importData} className="hidden" />
-                    </label>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Navigation */}
-          <nav className={`flex gap-1 border-t pt-3 ${isMobile ? 'overflow-x-auto pb-2' : ''}`}>
+          <nav className="flex gap-4 mt-4 border-t pt-4">
             {['dashboard', 'customers', 'transactions', 'balance-sheet'].map(tab => (
               <button
                 key={tab}
-                onClick={() => handleTabChange(tab)}
-                className={`px-3 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${
-                  activeTab === tab 
-                    ? 'bg-blue-500 text-white shadow-sm' 
-                    : 'text-gray-600 hover:bg-gray-100'
+                onClick={() => setActiveTab(tab)}
+                className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                  activeTab === tab ? 'bg-blue-500 text-white shadow-lg' : 'text-gray-600 hover:bg-gray-100'
                 }`}
               >
                 {tab.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
@@ -787,523 +667,417 @@ export default function ERPLedgerApp() {
         </div>
       </header>
 
-      {/* Mobile Menu Overlay */}
-      {mobileMenuOpen && (
-        <div className="lg:hidden fixed inset-0 bg-black bg-opacity-50 z-50" onClick={() => setMobileMenuOpen(false)}>
-          <div className="absolute top-0 right-0 w-64 h-full bg-white shadow-lg transform transition-transform">
-            <div className="p-4 border-b">
-              <div className="flex items-center justify-between">
-                <span className="font-semibold">Menu</span>
-                <button onClick={() => setMobileMenuOpen(false)} className="p-1">
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-            <div className="p-4 space-y-3">
-              <button
-                onClick={() => toggleOfflineMode(!offlineMode)}
-                className={`w-full px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                  offlineMode ? 'bg-red-500 text-white' : 'bg-green-500 text-white'
-                }`}
-              >
-                {offlineMode ? 'Switch to Online' : 'Switch to Offline'}
-              </button>
-              <button
-                onClick={exportData}
-                className="w-full flex items-center gap-2 px-3 py-2 bg-blue-500 text-white rounded-lg text-sm hover:bg-blue-600"
-              >
-                <Download className="w-4 h-4" />
-                Export Data
-              </button>
-              <label className="w-full flex items-center gap-2 px-3 py-2 bg-green-500 text-white rounded-lg text-sm hover:bg-green-600 cursor-pointer">
-                <Upload className="w-4 h-4" />
-                Import Data
-                <input type="file" accept=".json" onChange={importData} className="hidden" />
-              </label>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Error Display */}
       {error && (
-        <div className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6 mt-3">
-          <div className="bg-red-50 border-l-4 border-red-500 p-3 rounded-lg">
-            <div className="flex items-start gap-2">
-              <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+        <div className="max-w-7xl mx-auto px-4 mt-4">
+          <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-lg">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
               <div className="flex-1">
-                <p className="text-sm font-medium text-red-800">Error</p>
-                <p className="text-red-700 text-xs mt-1">{error}</p>
-                <div className="mt-2 flex gap-2">
-                  <button 
-                    onClick={() => { setError(null); refreshAllData(); }} 
-                    className="px-3 py-1 bg-red-600 text-white rounded text-sm hover:bg-red-700"
-                  >
-                    Retry
-                  </button>
-                  <button 
-                    onClick={() => setError(null)} 
-                    className="px-3 py-1 bg-gray-500 text-white rounded text-sm hover:bg-gray-600"
-                  >
-                    Dismiss
-                  </button>
-                </div>
+                <p className="font-medium text-red-800">Error</p>
+                <pre className="text-red-700 text-sm mt-2 whitespace-pre-wrap font-mono">{error}</pre>
               </div>
+              <button onClick={() => setError(null)} className="text-red-500 hover:text-red-700">
+                <X className="w-5 h-5" />
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6 py-4">
-        {renderTabContent()}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {activeTab === 'dashboard' && <DashboardView summary={summary} customers={customers} balanceSheet={balanceSheet} />}
+        {activeTab === 'customers' && (
+          <CustomersView
+            customers={filteredCustomers}
+            searchTerm={searchTerm}
+            setSearchTerm={setSearchTerm}
+            onAddCustomer={() => setShowAddCustomer(true)}
+            onViewCustomer={(name) => { fetchCustomerTransactions(name); setActiveTab('transactions'); }}
+            onDeleteCustomer={deleteCustomer}
+          />
+        )}
+        {activeTab === 'transactions' && (
+          <TransactionsView
+            customer={selectedCustomer}
+            transactions={transactions}
+            onAddTransaction={() => setShowAddTransaction(true)}
+            onEditTransaction={(txn) => { setEditingTransaction(txn); setShowEditTransaction(true); }}
+            onDeleteTransaction={deleteTransaction}
+            onExport={exportToCSV}
+            onBack={() => setSelectedCustomer(null)}
+          />
+        )}
+        {activeTab === 'balance-sheet' && (
+          <BalanceSheetView
+            balanceSheet={balanceSheet}
+            onViewCustomer={(name) => { fetchCustomerTransactions(name); setActiveTab('transactions'); }}
+          />
+        )}
       </main>
 
-      {/* Modals */}
-      {showAddCustomer && (
-        <AddCustomerModal 
-          onClose={() => setShowAddCustomer(false)} 
-          onSubmit={createCustomer} 
-          loading={loading} 
-          isMobile={isMobile}
-        />
-      )}
-      {showAddTransaction && (
-        <AddTransactionModal 
-          customers={customers} 
-          selectedCustomer={selectedCustomer?.name} 
-          onClose={() => setShowAddTransaction(false)} 
-          onSubmit={createTransaction} 
-          loading={loading}
-          isMobile={isMobile}
-        />
-      )}
+      {showAddCustomer && <AddCustomerModal onClose={() => setShowAddCustomer(false)} onSubmit={createCustomer} loading={loading} />}
+      {showAddTransaction && <AddTransactionModal customers={customers} selectedCustomer={selectedCustomer?.name} onClose={() => setShowAddTransaction(false)} onSubmit={createTransaction} loading={loading} />}
+      {showEditTransaction && editingTransaction && <EditTransactionModal transaction={editingTransaction} onClose={() => { setShowEditTransaction(false); setEditingTransaction(null); }} onSubmit={updateTransaction} loading={loading} />}
     </div>
   );
 }
 
-// Dashboard Component
-function DashboardView({ summary, customers, balanceSheet, topCustomers, isMobile }) {
-  const stats = useMemo(() => [
-    { 
-      title: 'Total Customers', 
-      value: customers.length, 
-      icon: Users, 
-      gradient: 'from-blue-500 to-blue-600',
-      change: '+2%'
-    },
-    { 
-      title: 'Total DR Balance', 
-      value: `Rs. ${summary.totalDr?.toLocaleString() || '0'}`, 
-      icon: TrendingUp, 
-      gradient: 'from-red-500 to-red-600',
-      change: '+5%'
-    },
-    { 
-      title: 'Total CR Balance', 
-      value: `Rs. ${summary.totalCr?.toLocaleString() || '0'}`, 
-      icon: TrendingDown, 
-      gradient: 'from-green-500 to-green-600',
-      change: '-3%'
-    },
-    { 
-      title: 'Net Position', 
-      value: `Rs. ${Math.abs(summary.netPosition || 0).toLocaleString()}`, 
-      icon: DollarSign, 
-      gradient: summary.status === 'NET DR' ? 'from-red-500 to-red-600' : summary.status === 'NET CR' ? 'from-green-500 to-green-600' : 'from-blue-500 to-blue-600',
-      status: summary.status
-    }
-  ], [summary, customers.length]);
+function DashboardView({ summary, customers, balanceSheet }) {
+  const stats = [
+    { title: 'Total Customers', value: customers.length, icon: Users, gradient: 'from-blue-500 to-blue-600' },
+    { title: 'Total DR Balance', value: `Rs. ${summary.totalDr?.toLocaleString() || '0'}`, icon: TrendingUp, gradient: 'from-red-500 to-red-600' },
+    { title: 'Total CR Balance', value: `Rs. ${summary.totalCr?.toLocaleString() || '0'}`, icon: TrendingDown, gradient: 'from-green-500 to-green-600' },
+    { title: 'Net Position', value: `Rs. ${Math.abs(summary.netPosition || 0).toLocaleString()} ${summary.status || ''}`, icon: DollarSign, gradient: summary.status === 'NET DR' ? 'from-red-500 to-red-600' : summary.status === 'NET CR' ? 'from-green-500 to-green-600' : 'from-blue-500 to-blue-600' }
+  ];
+
+  const topCustomers = balanceSheet.sort((a, b) => Math.abs(b.balance) - Math.abs(a.balance)).slice(0, 10);
 
   return (
-    <div className="space-y-4">
-      {/* Stats Grid */}
-      <div className={`grid gap-3 ${isMobile ? 'grid-cols-2' : 'grid-cols-2 lg:grid-cols-4'}`}>
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {stats.map((stat, index) => (
-          <div key={index} className="bg-white rounded-lg shadow-sm p-4 border border-gray-200">
-            <div className={`inline-flex p-2 rounded-lg bg-gradient-to-br ${stat.gradient} mb-3`}>
-              <stat.icon className="w-4 h-4 text-white" />
+          <div key={index} className="bg-white rounded-xl shadow-lg p-6 transform hover:scale-105 transition-all duration-300">
+            <div className={`inline-flex p-3 rounded-lg bg-gradient-to-br ${stat.gradient} mb-4`}>
+              <stat.icon className="w-6 h-6 text-white" />
             </div>
-            <p className="text-gray-600 text-xs font-medium truncate">{stat.title}</p>
-            <p className="text-lg font-bold text-gray-900 truncate">{stat.value}</p>
-            {stat.status && (
-              <p className="text-xs font-medium mt-1">
-                <span className={stat.status === 'NET DR' ? 'text-red-600' : stat.status === 'NET CR' ? 'text-green-600' : 'text-blue-600'}>
-                  {stat.status}
-                </span>
-              </p>
-            )}
+            <p className="text-gray-600 text-sm font-medium">{stat.title}</p>
+            <p className="text-2xl font-bold text-gray-900 mt-2">{stat.value}</p>
           </div>
         ))}
       </div>
 
-      {/* Top Customers */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-        <div className="p-4 border-b border-gray-200">
-          <h3 className="font-semibold text-gray-900">Top Customer Balances</h3>
-        </div>
-        <div className="overflow-hidden">
-          <div className={`grid ${isMobile ? 'grid-cols-3' : 'grid-cols-4'} gap-4 p-4 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500`}>
-            <span>Customer</span>
-            <span className="text-right">Balance</span>
-            <span className="text-center">DR/CR</span>
-            {!isMobile && <span className="text-center">Status</span>}
-          </div>
-          <div className="max-h-96 overflow-y-auto">
-            {topCustomers.map((customer, index) => (
-              <div key={index} className="border-b border-gray-100 last:border-b-0">
-                <div className={`grid ${isMobile ? 'grid-cols-3' : 'grid-cols-4'} gap-4 p-4 items-center hover:bg-gray-50`}>
-                  <span className="font-medium text-sm truncate" title={customer.customerName}>
-                    {customer.customerName}
-                  </span>
-                  <span className="text-right font-semibold text-sm">
-                    Rs. {Math.abs(customer.balance).toLocaleString()}
-                  </span>
-                  <div className="text-center">
-                    <span className={`inline-block px-2 py-1 rounded-full text-xs font-bold ${
-                      customer.drCr === 'DR' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
-                    }`}>
+      <div className="bg-white rounded-xl shadow-lg p-6">
+        <h3 className="text-xl font-bold text-gray-900 mb-4">Top 10 Customer Balances</h3>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b-2 border-gray-200">
+                <th className="text-left py-3 px-4 font-semibold text-gray-700">Customer</th>
+                <th className="text-right py-3 px-4 font-semibold text-gray-700">Balance</th>
+                <th className="text-center py-3 px-4 font-semibold text-gray-700">DR/CR</th>
+              </tr>
+            </thead>
+            <tbody>
+              {topCustomers.map((customer, index) => (
+                <tr key={index} className="border-b border-gray-100 hover:bg-gray-50">
+                  <td className="py-3 px-4 font-medium">{customer.customerName}</td>
+                  <td className="py-3 px-4 text-right font-semibold">Rs. {Math.abs(customer.balance).toLocaleString()}</td>
+                  <td className="py-3 px-4 text-center">
+                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${customer.drCr === 'DR' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
                       {customer.drCr}
                     </span>
-                  </div>
-                  {!isMobile && (
-                    <div className="text-center">
-                      <span className="text-xs text-gray-500">Active</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
   );
 }
 
-// Customers Component
-function CustomersView({ customers, searchTerm, setSearchTerm, onAddCustomer, onViewCustomer, onDeleteCustomer, offlineMode, isMobile }) {
-  const [deleting, setDeleting] = useState(null);
-
-  const handleDelete = async (customerName) => {
-    if (!window.confirm(`Delete customer "${customerName}" and all their transactions?`)) return;
-    setDeleting(customerName);
-    try {
-      await onDeleteCustomer(customerName);
-    } catch (err) {
-      alert('Error: ' + err.message);
-    } finally {
-      setDeleting(null);
-    }
-  };
-
+function CustomersView({ customers, searchTerm, setSearchTerm, onAddCustomer, onViewCustomer, onDeleteCustomer }) {
   return (
-    <div className="space-y-4">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <h2 className="text-xl font-bold text-gray-900">Customers</h2>
-        <button 
-          onClick={onAddCustomer}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-all shadow-sm w-full sm:w-auto justify-center"
-        >
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <h2 className="text-2xl font-bold text-gray-900">Customer Management</h2>
+        <button onClick={onAddCustomer} className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-500 text-white rounded-lg hover:from-blue-600 hover:to-purple-600 transition-all shadow-lg">
           <Plus className="w-4 h-4" />
           Add Customer
         </button>
       </div>
 
-      {/* Search */}
       <div className="relative">
-        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
         <input
           type="text"
           placeholder="Search customers..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
-          className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+          className="w-full pl-10 pr-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all"
         />
       </div>
 
-      {/* Customers Grid */}
-      {customers.length > 0 ? (
-        <div className="grid gap-3">
-          {customers.map((customer) => (
-            <div key={customer.id} className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 hover:shadow-md transition-all">
-              <div className="flex items-start justify-between mb-3">
-                <h3 className="font-semibold text-gray-900 truncate flex-1 mr-2">{customer.name}</h3>
-                <div className="flex gap-1 flex-shrink-0">
-                  <span className={`px-2 py-1 rounded text-xs font-bold ${
-                    customer.status === 'Active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'
-                  }`}>
-                    {customer.status}
-                  </span>
-                  {offlineMode && (
-                    <span className="px-2 py-1 rounded text-xs font-bold bg-yellow-100 text-yellow-700">
-                      Offline
-                    </span>
-                  )}
-                </div>
-              </div>
-              
-              <div className="space-y-1 text-sm text-gray-600 mb-4">
-                <p className="truncate">Sheet: {customer.sheetName}</p>
-                <p>Created: {customer.createdDate ? new Date(customer.createdDate).toLocaleDateString() : 'N/A'}</p>
-              </div>
-              
-              <div className="flex gap-2">
-                <button 
-                  onClick={() => onViewCustomer(customer.name)}
-                  className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-all text-sm"
-                >
-                  <Eye className="w-4 h-4" />
-                  View Ledger
-                </button>
-                <button 
-                  onClick={() => handleDelete(customer.name)}
-                  disabled={deleting === customer.name}
-                  className="px-3 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-all disabled:opacity-50"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {customers.map((customer, index) => (
+          <div key={index} className="bg-white rounded-xl shadow-lg p-6 hover:shadow-xl transition-all duration-300">
+            <div className="flex justify-between items-start mb-4">
+              <h3 className="text-lg font-bold text-gray-900">{customer.name}</h3>
+              <span className={`px-2 py-1 rounded text-xs font-bold ${customer.status === 'Active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}`}>
+                {customer.status}
+              </span>
             </div>
-          ))}
-        </div>
-      ) : (
-        <div className="text-center py-12 bg-white rounded-lg border border-gray-200">
-          <Users className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-          <p className="text-gray-500">No customers found</p>
-          {searchTerm && (
-            <p className="text-sm text-gray-400 mt-1">Try adjusting your search</p>
-          )}
+            <div className="space-y-2 text-sm text-gray-600 mb-4">
+              <p>Sheet: {customer.sheetName}</p>
+              <p>Created: {customer.createdDate ? new Date(customer.createdDate).toLocaleDateString() : 'N/A'}</p>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => onViewCustomer(customer.name)} className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-all">
+                <Eye className="w-4 h-4" />
+                View
+              </button>
+              <button onClick={() => onDeleteCustomer(customer.name)} className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-all">
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {customers.length === 0 && (
+        <div className="text-center py-12">
+          <Users className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+          <p className="text-gray-500 text-lg">No customers found</p>
         </div>
       )}
     </div>
   );
 }
 
-// Transactions Component
-function TransactionsView({ customer, transactions, onAddTransaction, onBack, onDeleteTransaction, offlineMode, isMobile }) {
-  const [deleting, setDeleting] = useState(null);
-
+function TransactionsView({ customer, transactions, onAddTransaction, onEditTransaction, onDeleteTransaction, onExport, onBack }) {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [dateFilter, setDateFilter] = useState({ start: '', end: '' });
+  
   if (!customer) {
     return (
-      <div className="text-center py-12 bg-white rounded-lg border border-gray-200">
-        <AlertCircle className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-        <p className="text-gray-500 mb-4">No customer selected</p>
-        <button onClick={onBack} className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-all">
+      <div className="text-center py-12 bg-white rounded-xl shadow-lg">
+        <AlertCircle className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+        <p className="text-gray-500 text-lg">No customer selected</p>
+        <button onClick={onBack} className="mt-4 px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-all">
           Back to Customers
         </button>
       </div>
     );
   }
 
-  const handleDelete = async (transactionId) => {
-    if (!window.confirm('Delete this transaction?')) return;
-    setDeleting(transactionId);
-    try {
-      await onDeleteTransaction(transactionId, customer.name);
-    } catch (err) {
-      alert('Error: ' + err.message);
-    } finally {
-      setDeleting(null);
-    }
-  };
-
-  const visibleTransactions = isMobile ? transactions.slice(0, 20) : transactions;
+  // Filter transactions based on search and date
+  const filteredTransactions = transactions.filter(txn => {
+    const matchesSearch = searchTerm === '' || 
+      txn.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      txn.item?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      txn.transactionType?.toLowerCase().includes(searchTerm.toLowerCase());
+    
+    const matchesDate = (!dateFilter.start || txn.date >= dateFilter.start) &&
+                       (!dateFilter.end || txn.date <= dateFilter.end);
+    
+    return matchesSearch && matchesDate;
+  });
 
   return (
-    <div className="space-y-4">
-      {/* Header */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-          <div className="flex-1">
-            <div className="flex items-center gap-2 mb-1">
-              <button onClick={onBack} className="p-1 text-gray-500 hover:text-gray-700">
-                <ChevronLeft className="w-5 h-5" />
-              </button>
-              <h2 className="text-xl font-bold text-gray-900 truncate">{customer.name}</h2>
-            </div>
-            <p className="text-gray-600 text-sm">Transaction Ledger • {transactions.length} records</p>
-            {offlineMode && (
-              <p className="text-xs text-yellow-600 mt-1">🔴 Offline Mode</p>
-            )}
+    <div className="space-y-6">
+      <div className="bg-white rounded-xl shadow-lg p-6">
+        <div className="flex justify-between items-start">
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900">{customer.name}</h2>
+            <p className="text-gray-600 mt-1">Transaction Ledger</p>
+            <p className="text-sm text-gray-500 mt-1">
+              Showing {filteredTransactions.length} of {transactions.length} transactions
+            </p>
           </div>
-          
           <div className="text-right">
-            <p className="text-sm text-gray-600">Balance</p>
-            <p className="text-xl font-bold text-gray-900">
+            <p className="text-sm text-gray-600">Final Balance</p>
+            <p className="text-2xl font-bold text-gray-900">
               Rs. {customer.summary?.finalBalance?.toLocaleString() || '0'}
             </p>
-            <span className={`inline-block px-2 py-1 rounded-full text-xs font-bold mt-1 ${
-              customer.summary?.finalDRCR === 'DR' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
+            <span className={`inline-block px-3 py-1 rounded-full text-sm font-bold mt-2 ${
+              customer.summary?.finalDRCR === 'DR' ? 'bg-red-100 text-red-700' : 
+              'bg-green-100 text-green-700'
             }`}>
               {customer.summary?.finalDRCR || 'DR'}
             </span>
           </div>
         </div>
 
-        {/* Summary */}
-        <div className={`grid gap-4 mt-4 pt-4 border-t border-gray-200 ${
-          isMobile ? 'grid-cols-2' : 'grid-cols-4'
-        }`}>
+        <div className="grid grid-cols-4 gap-4 mt-6 pt-6 border-t">
           <div>
-            <p className="text-xs text-gray-600">Total Debit</p>
-            <p className="text-sm font-semibold text-red-600">
+            <p className="text-sm text-gray-600">Total Debit</p>
+            <p className="text-lg font-bold text-red-600">
               Rs. {customer.summary?.totalDebit?.toLocaleString() || '0'}
             </p>
           </div>
           <div>
-            <p className="text-xs text-gray-600">Total Credit</p>
-            <p className="text-sm font-semibold text-green-600">
+            <p className="text-sm text-gray-600">Total Credit</p>
+            <p className="text-lg font-bold text-green-600">
               Rs. {customer.summary?.totalCredit?.toLocaleString() || '0'}
             </p>
           </div>
           <div>
-            <p className="text-xs text-gray-600">Net Position</p>
-            <p className="text-sm font-semibold text-blue-600">
+            <p className="text-sm text-gray-600">Net Position</p>
+            <p className="text-lg font-bold text-blue-600">
               Rs. {customer.summary?.netBalance?.toLocaleString() || '0'}
             </p>
+            <span className={`text-sm font-medium ${
+              customer.summary?.netDRCR === 'DR' ? 'text-red-600' : 'text-green-600'
+            }`}>
+              {customer.summary?.netDRCR}
+            </span>
           </div>
-          {!isMobile && (
-            <div>
-              <p className="text-xs text-gray-600">Transactions</p>
-              <p className="text-sm font-semibold text-purple-600">
-                {customer.summary?.transactionCount || 0}
-              </p>
+          <div>
+            <p className="text-sm text-gray-600">Transactions</p>
+            <p className="text-lg font-bold text-purple-600">
+              {customer.summary?.transactionCount || 0}
+            </p>
+          </div>
+        </div>
+
+        {/* Search and Filter Section */}
+        <div className="mt-6 pt-6 border-t space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="md:col-span-1">
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Search Transactions</label>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search description, item, type..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all"
+                />
+              </div>
             </div>
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Start Date</label>
+              <input
+                type="date"
+                value={dateFilter.start}
+                onChange={(e) => setDateFilter({ ...dateFilter, start: e.target.value })}
+                className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">End Date</label>
+              <input
+                type="date"
+                value={dateFilter.end}
+                onChange={(e) => setDateFilter({ ...dateFilter, end: e.target.value })}
+                className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all"
+              />
+            </div>
+          </div>
+          {(searchTerm || dateFilter.start || dateFilter.end) && (
+            <button
+              onClick={() => { setSearchTerm(''); setDateFilter({ start: '', end: '' }); }}
+              className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+            >
+              Clear Filters
+            </button>
           )}
         </div>
 
-        {/* Actions */}
-        <div className="flex gap-2 mt-4">
+        <div className="flex gap-3 mt-6">
           <button 
-            onClick={onAddTransaction}
-            className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-all text-sm font-medium"
+            onClick={onAddTransaction} 
+            className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg hover:from-green-600 hover:to-green-700 transition-all shadow-lg"
           >
             <Plus className="w-4 h-4" />
             Add Transaction
           </button>
+          <button 
+            onClick={onExport} 
+            className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-lg hover:from-purple-600 hover:to-purple-700 transition-all shadow-lg"
+          >
+            <Download className="w-4 h-4" />
+            Export CSV
+          </button>
+          <button 
+            onClick={onBack} 
+            className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-all"
+          >
+            Back
+          </button>
         </div>
       </div>
 
-      {/* Transactions Table */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-        {visibleTransactions.length > 0 ? (
-          <>
-            {/* Mobile View */}
-            {isMobile ? (
-              <div className="divide-y divide-gray-200 max-h-96 overflow-y-auto">
-                {visibleTransactions.map((txn, index) => (
-                  <div key={txn.id || index} className="p-4 hover:bg-gray-50">
-                    <div className="flex justify-between items-start mb-2">
-                      <div>
-                        <p className="font-medium text-sm">{txn.description}</p>
-                        <p className="text-xs text-gray-500">{txn.date}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="font-semibold text-sm">
-                          Rs. {(txn.calculatedBalance || 0).toLocaleString()}
-                        </p>
-                        <span className={`inline-block px-2 py-0.5 rounded-full text-xs ${
-                          txn.calculatedDrCr === 'DR' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
-                        }`}>
-                          {txn.calculatedDrCr}
-                        </span>
-                      </div>
-                    </div>
-                    
-                    <div className="grid grid-cols-2 gap-2 text-xs text-gray-600 mb-2">
-                      <div>
-                        <span className="font-medium">Item:</span> {txn.item || '-'}
-                      </div>
-                      <div>
-                        <span className="font-medium">Type:</span> {txn.transactionType}
-                      </div>
-                    </div>
-                    
-                    <div className="flex justify-between items-center text-xs">
-                      <div className="text-gray-500">
-                        {txn.debit > 0 && `Debit: Rs. ${txn.debit.toLocaleString()}`}
-                        {txn.credit > 0 && `Credit: Rs. ${txn.credit.toLocaleString()}`}
-                      </div>
-                      <button 
-                        onClick={() => handleDelete(txn.id)}
-                        disabled={deleting === txn.id}
-                        className="p-1 text-red-500 hover:text-red-700 disabled:opacity-50"
+      <div className="bg-white rounded-xl shadow-lg overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-gradient-to-r from-blue-500 to-purple-500 text-white">
+              <tr>
+                <th className="py-3 px-3 text-left font-semibold">S.N</th>
+                <th className="py-3 px-3 text-left font-semibold">Date</th>
+                <th className="py-3 px-3 text-left font-semibold">Description</th>
+                <th className="py-3 px-3 text-left font-semibold">Item</th>
+                <th className="py-3 px-3 text-right font-semibold">Weight/Qty</th>
+                <th className="py-3 px-3 text-right font-semibold">Rate</th>
+                <th className="py-3 px-3 text-left font-semibold">Type</th>
+                <th className="py-3 px-3 text-left font-semibold">Payment</th>
+                <th className="py-3 px-3 text-left font-semibold">Bank</th>
+                <th className="py-3 px-3 text-left font-semibold">Cheque</th>
+                <th className="py-3 px-3 text-right font-semibold">Debit</th>
+                <th className="py-3 px-3 text-right font-semibold">Credit</th>
+                <th className="py-3 px-3 text-right font-semibold">Balance</th>
+                <th className="py-3 px-3 text-center font-semibold">DR/CR</th>
+                <th className="py-3 px-3 text-center font-semibold">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredTransactions.map((txn, index) => (
+                <tr key={index} className="border-b border-gray-100 hover:bg-gray-50">
+                  <td className="py-3 px-3 font-medium">{txn.sn || index + 1}</td>
+                  <td className="py-3 px-3">
+                    {txn.date instanceof Date ? txn.date.toLocaleDateString() : txn.date}
+                  </td>
+                  <td className="py-3 px-3">{txn.description}</td>
+                  <td className="py-3 px-3">{txn.item || '-'}</td>
+                  <td className="py-3 px-3 text-right font-medium">
+                    {txn.weightQty ? parseFloat(txn.weightQty).toLocaleString() : '-'}
+                  </td>
+                  <td className="py-3 px-3 text-right font-medium">
+                    {txn.rate || '-'}
+                  </td>
+                  <td className="py-3 px-3">{txn.transactionType || '-'}</td>
+                  <td className="py-3 px-3">{txn.paymentMethod || '-'}</td>
+                  <td className="py-3 px-3">{txn.bankName || '-'}</td>
+                  <td className="py-3 px-3">{txn.chequeNo || '-'}</td>
+                  <td className="py-3 px-3 text-right font-semibold text-red-600">
+                    {txn.debit && txn.debit !== 0 ? `Rs. ${parseFloat(txn.debit).toLocaleString()}` : '-'}
+                  </td>
+                  <td className="py-3 px-3 text-right font-semibold text-green-600">
+                    {txn.credit && txn.credit !== 0 ? `Rs. ${parseFloat(txn.credit).toLocaleString()}` : '-'}
+                  </td>
+                  <td className="py-3 px-3 text-right font-bold">
+                    Rs. {(txn.calculatedBalance || 0).toLocaleString()}
+                  </td>
+                  <td className="py-3 px-3 text-center">
+                    <span className={`px-2 py-1 rounded-full text-xs font-bold ${
+                      txn.calculatedDrCr === 'DR' ? 'bg-red-100 text-red-700' : 
+                      'bg-green-100 text-green-700'
+                    }`}>
+                      {txn.calculatedDrCr || 'DR'}
+                    </span>
+                  </td>
+                  <td className="py-3 px-3 text-center">
+                    <div className="flex gap-1 justify-center">
+                      <button
+                        onClick={() => onEditTransaction(txn)}
+                        className="p-1 text-blue-600 hover:bg-blue-50 rounded"
+                        title="Edit"
                       >
-                        <Trash2 className="w-3 h-3" />
+                        <Edit className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => onDeleteTransaction(customer.name, txn.sn)}
+                        className="p-1 text-red-600 hover:bg-red-50 rounded"
+                        title="Delete"
+                      >
+                        <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              /* Desktop View */
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-gray-50 border-b border-gray-200">
-                    <tr>
-                      {['Date', 'Description', 'Item', 'Type', 'Payment', 'Debit', 'Credit', 'Balance', 'DR/CR', ''].map(header => (
-                        <th key={header} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          {header}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-200">
-                    {visibleTransactions.map((txn, index) => (
-                      <tr key={txn.id || index} className="hover:bg-gray-50">
-                        <td className="px-4 py-3 text-sm">{txn.date}</td>
-                        <td className="px-4 py-3 text-sm max-w-xs truncate" title={txn.description}>
-                          {txn.description}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-gray-500">{txn.item || '-'}</td>
-                        <td className="px-4 py-3 text-sm">{txn.transactionType}</td>
-                        <td className="px-4 py-3 text-sm text-gray-500">{txn.paymentMethod}</td>
-                        <td className="px-4 py-3 text-sm text-right font-semibold text-red-600">
-                          {txn.debit > 0 ? `Rs. ${txn.debit.toLocaleString()}` : '-'}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-right font-semibold text-green-600">
-                          {txn.credit > 0 ? `Rs. ${txn.credit.toLocaleString()}` : '-'}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-right font-bold">
-                          Rs. {(txn.calculatedBalance || 0).toLocaleString()}
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                          <span className={`inline-block px-2 py-1 rounded-full text-xs font-bold ${
-                            txn.calculatedDrCr === 'DR' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
-                          }`}>
-                            {txn.calculatedDrCr}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                          <button 
-                            onClick={() => handleDelete(txn.id)}
-                            disabled={deleting === txn.id}
-                            className="p-1 text-red-500 hover:text-red-700 disabled:opacity-50"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            
-            {isMobile && transactions.length > 20 && (
-              <div className="p-4 border-t border-gray-200 text-center">
-                <p className="text-sm text-gray-500">
-                  Showing 20 of {transactions.length} transactions
-                </p>
-              </div>
-            )}
-          </>
-        ) : (
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {filteredTransactions.length === 0 && (
           <div className="text-center py-12">
-            <AlertCircle className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-            <p className="text-gray-500">No transactions found</p>
+            <AlertCircle className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+            <p className="text-gray-500 text-lg">
+              {transactions.length === 0 ? 'No transactions found' : 'No transactions match your filters'}
+            </p>
           </div>
         )}
       </div>
@@ -1311,97 +1085,48 @@ function TransactionsView({ customer, transactions, onAddTransaction, onBack, on
   );
 }
 
-// Balance Sheet Component
-function BalanceSheetView({ balanceSheet, onViewCustomer, isMobile }) {
+function BalanceSheetView({ balanceSheet, onViewCustomer }) {
   return (
-    <div className="space-y-4">
-      <h2 className="text-xl font-bold text-gray-900">Balance Sheet</h2>
+    <div className="space-y-6">
+      <h2 className="text-2xl font-bold text-gray-900">Balance Sheet</h2>
 
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-        {balanceSheet.length > 0 ? (
-          <>
-            {isMobile ? (
-              <div className="divide-y divide-gray-200">
-                {balanceSheet.map((item, index) => (
-                  <div key={index} className="p-4 hover:bg-gray-50">
-                    <div className="flex justify-between items-start mb-2">
-                      <h3 className="font-semibold text-gray-900 truncate flex-1 mr-2">
-                        {item.customerName}
-                      </h3>
-                      <span className="font-bold text-sm">
-                        Rs. {Math.abs(item.balance).toLocaleString()}
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className={`px-2 py-1 rounded-full text-xs font-bold ${
-                        item.drCr === 'DR' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
-                      }`}>
-                        {item.drCr}
-                      </span>
-                      <button 
-                        onClick={() => onViewCustomer(item.customerName)}
-                        className="px-3 py-1 bg-blue-500 text-white rounded text-sm hover:bg-blue-600 transition-all"
-                      >
-                        View
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-gray-50 border-b border-gray-200">
-                    <tr>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Customer Name
-                      </th>
-                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Balance (PKR)
-                      </th>
-                      <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        DR/CR
-                      </th>
-                      <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Actions
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-200">
-                    {balanceSheet.map((item, index) => (
-                      <tr key={index} className="hover:bg-gray-50">
-                        <td className="px-4 py-3 font-semibold text-gray-900">
-                          {item.customerName}
-                        </td>
-                        <td className="px-4 py-3 text-right font-bold">
-                          Rs. {Math.abs(item.balance).toLocaleString()}
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                          <span className={`px-3 py-1 rounded-full text-xs font-bold ${
-                            item.drCr === 'DR' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
-                          }`}>
-                            {item.drCr}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                          <button 
-                            onClick={() => onViewCustomer(item.customerName)}
-                            className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-all text-sm"
-                          >
-                            View Ledger
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </>
-        ) : (
+      <div className="bg-white rounded-xl shadow-lg overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-gradient-to-r from-blue-500 to-purple-500 text-white">
+              <tr>
+                <th className="py-4 px-6 text-left text-sm font-semibold">Customer Name</th>
+                <th className="py-4 px-6 text-right text-sm font-semibold">Balance (PKR)</th>
+                <th className="py-4 px-6 text-center text-sm font-semibold">DR/CR</th>
+                <th className="py-4 px-6 text-center text-sm font-semibold">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {balanceSheet.map((item, index) => (
+                <tr key={index} className="border-b border-gray-100 hover:bg-gray-50">
+                  <td className="py-4 px-6 font-semibold text-gray-900">{item.customerName}</td>
+                  <td className="py-4 px-6 text-right font-bold">Rs. {Math.abs(item.balance).toLocaleString()}</td>
+                  <td className="py-4 px-6 text-center">
+                    <span className={`px-3 py-1 rounded-full text-sm font-bold ${item.drCr === 'DR' ? 'bg-red-100 text-red-700' : item.drCr === 'CR' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}`}>
+                      {item.drCr}
+                    </span>
+                  </td>
+                  <td className="py-4 px-6 text-center">
+                    <button onClick={() => onViewCustomer(item.customerName)} className="inline-flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-all text-sm">
+                      <Eye className="w-4 h-4" />
+                      View
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {balanceSheet.length === 0 && (
           <div className="text-center py-12">
-            <AlertCircle className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-            <p className="text-gray-500">No balance data found</p>
+            <AlertCircle className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+            <p className="text-gray-500 text-lg">No balance data found</p>
           </div>
         )}
       </div>
@@ -1409,13 +1134,8 @@ function BalanceSheetView({ balanceSheet, onViewCustomer, isMobile }) {
   );
 }
 
-// Add Customer Modal
-function AddCustomerModal({ onClose, onSubmit, loading, isMobile }) {
-  const [formData, setFormData] = useState({ 
-    name: '', 
-    openingBalance: 0, 
-    color: 'none' 
-  });
+function AddCustomerModal({ onClose, onSubmit, loading }) {
+  const [formData, setFormData] = useState({ name: '', openingBalance: 0, color: 'none' });
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -1425,51 +1145,45 @@ function AddCustomerModal({ onClose, onSubmit, loading, isMobile }) {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className={`bg-white rounded-xl shadow-2xl w-full max-w-md ${isMobile ? 'mx-2' : ''}`}>
-        <div className="flex justify-between items-center p-4 border-b border-gray-200">
-          <h3 className="text-lg font-bold text-gray-900">Add New Customer</h3>
-          <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-600">
-            <X className="w-5 h-5" />
+      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
+        <div className="flex justify-between items-center mb-6">
+          <h3 className="text-2xl font-bold text-gray-900">Add New Customer</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X className="w-6 h-6" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-4 space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              Customer Name *
-            </label>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">Customer Name *</label>
             <input
               type="text"
               required
               value={formData.name}
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+              className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all"
               placeholder="Enter customer name"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              Opening Balance
-            </label>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">Opening Balance</label>
             <input
               type="number"
               step="0.01"
               value={formData.openingBalance}
               onChange={(e) => setFormData({ ...formData, openingBalance: parseFloat(e.target.value) || 0 })}
-              className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+              className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all"
               placeholder="0.00"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              Color Category
-            </label>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">Color Category</label>
             <select
               value={formData.color}
               onChange={(e) => setFormData({ ...formData, color: e.target.value })}
-              className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+              className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all"
             >
               <option value="none">No Color</option>
               <option value="brown">🟨 Brown/Yellow (Dealers)</option>
@@ -1478,18 +1192,10 @@ function AddCustomerModal({ onClose, onSubmit, loading, isMobile }) {
           </div>
 
           <div className="flex gap-3 pt-4">
-            <button 
-              type="button" 
-              onClick={onClose}
-              className="flex-1 px-4 py-2.5 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-all font-semibold"
-            >
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-3 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-all font-semibold">
               Cancel
             </button>
-            <button 
-              type="submit" 
-              disabled={loading}
-              className="flex-1 px-4 py-2.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-all font-semibold disabled:opacity-50"
-            >
+            <button type="submit" disabled={loading} className="flex-1 px-4 py-3 bg-gradient-to-r from-blue-500 to-purple-500 text-white rounded-lg hover:from-blue-600 hover:to-purple-600 transition-all font-semibold disabled:opacity-50">
               {loading ? 'Creating...' : 'Create Customer'}
             </button>
           </div>
@@ -1499,8 +1205,7 @@ function AddCustomerModal({ onClose, onSubmit, loading, isMobile }) {
   );
 }
 
-// Add Transaction Modal
-function AddTransactionModal({ customers, selectedCustomer, onClose, onSubmit, loading, isMobile }) {
+function AddTransactionModal({ customers, selectedCustomer, onClose, onSubmit, loading }) {
   const [formData, setFormData] = useState({
     customerName: selectedCustomer || '',
     date: new Date().toISOString().split('T')[0],
@@ -1508,7 +1213,7 @@ function AddTransactionModal({ customers, selectedCustomer, onClose, onSubmit, l
     item: '',
     weightQty: '',
     rate: '',
-    transactionType: 'Sale',
+    transactionType: 'Sale/Purchase',
     paymentMethod: '',
     bankName: '',
     chequeNo: '',
@@ -1517,9 +1222,24 @@ function AddTransactionModal({ customers, selectedCustomer, onClose, onSubmit, l
   });
 
   const items = [
-    'Chilled Gots', 'Chilled Scrape', 'Guides', 'Chilled Rolls',
-    'Fire Bricks', 'H Oil', 'Magnese', 'Chrome',
-    'Black Scrape', 'White Scrape', 'Toka Scrape', 'Pig Scrape'
+    'Chilled Gots',
+    'Chilled Scrape',
+    'Guides',
+    'Chilled Rolls',
+    'Silver',
+    'Steel',
+    'Barring',
+    'Nickle',
+    'Molli',
+    'Fero Powder',
+    'Fire Bricks',
+    'H Oil',
+    'Magnese',
+    'Chrome',
+    'Black Scrape',
+    'White Scrape',
+    'Toka Scrape',
+    'Pig Scrape'
   ];
 
   const handleSubmit = async (e) => {
@@ -1548,154 +1268,132 @@ function AddTransactionModal({ customers, selectedCustomer, onClose, onSubmit, l
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-      <div className={`bg-white rounded-xl shadow-2xl w-full max-w-2xl ${isMobile ? 'mx-2 my-4' : 'my-8'}`}>
-        <div className="flex justify-between items-center p-4 border-b border-gray-200">
-          <h3 className="text-lg font-bold text-gray-900">Add New Transaction</h3>
-          <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-600">
-            <X className="w-5 h-5" />
+      <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full p-6 my-8">
+        <div className="flex justify-between items-center mb-6">
+          <h3 className="text-2xl font-bold text-gray-900">Add New Transaction</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X className="w-6 h-6" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-4 space-y-4 max-h-[80vh] overflow-y-auto">
-          <div className="grid gap-4 sm:grid-cols-2">
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Customer *
-              </label>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Customer *</label>
               <select
                 required
                 value={formData.customerName}
                 onChange={(e) => setFormData({ ...formData, customerName: e.target.value })}
-                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all"
               >
                 <option value="">Select Customer</option>
-                {customers.map((c) => (
-                  <option key={c.id} value={c.name}>{c.name}</option>
+                {customers.map((c, i) => (
+                  <option key={i} value={c.name}>{c.name}</option>
                 ))}
               </select>
             </div>
 
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Date *
-              </label>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Date *</label>
               <input
                 type="date"
                 required
                 value={formData.date}
                 onChange={(e) => setFormData({ ...formData, date: e.target.value })}
-                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all"
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              Description *
-            </label>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">Description *</label>
             <input
               type="text"
               required
               value={formData.description}
               onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-              className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+              className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all"
               placeholder="Enter transaction description"
             />
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Item
-              </label>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Item</label>
               <select
                 value={formData.item}
                 onChange={(e) => setFormData({ ...formData, item: e.target.value })}
-                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all"
               >
                 <option value="">Select Item</option>
-                {items.map((item) => (
-                  <option key={item} value={item}>{item}</option>
+                {items.map((item, i) => (
+                  <option key={i} value={item}>{item}</option>
                 ))}
               </select>
             </div>
 
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Transaction Type
-              </label>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Transaction Type</label>
               <select
                 value={formData.transactionType}
                 onChange={(e) => setFormData({ ...formData, transactionType: e.target.value })}
-                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all"
               >
                 <option value="Sale">Sale</option>
                 <option value="Purchase">Purchase</option>
-                <option value="Payment Received - Cash">Payment Received - Cash</option>
-                <option value="Payment Received - Bank">Payment Received - Bank</option>
-                <option value="Payment Received - Cheque">Payment Received - Cheque</option>
-                <option value="Payment Given - Cash">Payment Given - Cash</option>
-                <option value="Payment Given - Bank">Payment Given - Bank</option>
-                <option value="Payment Given - Cheque">Payment Given - Cheque</option>
+                <option value="Payment Received">Payment Received</option>
+                <option value="Payment Given">Payment Given</option>
                 <option value="Opening Balance">Opening Balance</option>
               </select>
             </div>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid grid-cols-3 gap-4">
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Weight/Qty
-              </label>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Weight/Qty</label>
               <input
                 type="number"
                 step="0.01"
                 value={formData.weightQty}
                 onChange={(e) => setFormData({ ...formData, weightQty: e.target.value })}
-                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all"
                 placeholder="0.00"
               />
             </div>
 
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Rate (PKR)
-              </label>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Rate (PKR)</label>
               <input
                 type="number"
                 step="0.01"
                 value={formData.rate}
                 onChange={(e) => setFormData({ ...formData, rate: e.target.value })}
-                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all"
                 placeholder="0.00"
               />
             </div>
 
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Amount (PKR) *
-              </label>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Amount (PKR) *</label>
               <input
                 type="number"
                 step="0.01"
                 required
                 value={formData.amount}
                 onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
-                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all bg-yellow-50"
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all bg-yellow-50"
                 placeholder="Auto-calculated"
               />
             </div>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid grid-cols-3 gap-4">
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Payment Method
-              </label>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Payment Method</label>
               <select
                 value={formData.paymentMethod}
                 onChange={(e) => setFormData({ ...formData, paymentMethod: e.target.value })}
-                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all"
               >
                 <option value="">Select</option>
                 <option value="Cash">Cash</option>
@@ -1706,40 +1404,35 @@ function AddTransactionModal({ customers, selectedCustomer, onClose, onSubmit, l
             </div>
 
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Bank Name
-              </label>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Bank Name</label>
               <input
                 type="text"
                 value={formData.bankName}
                 onChange={(e) => setFormData({ ...formData, bankName: e.target.value })}
-                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all"
                 placeholder="Optional"
               />
             </div>
 
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Cheque No.
-              </label>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Cheque No.</label>
               <input
                 type="text"
                 value={formData.chequeNo}
                 onChange={(e) => setFormData({ ...formData, chequeNo: e.target.value })}
-                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all"
                 placeholder="Optional"
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              Debit/Credit
-            </label>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">Debit/Credit *</label>
             <select
+              required
               value={formData.drCr}
               onChange={(e) => setFormData({ ...formData, drCr: e.target.value })}
-              className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+              className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all"
             >
               <option value="Debit">Debit</option>
               <option value="Credit">Credit</option>
@@ -1747,19 +1440,256 @@ function AddTransactionModal({ customers, selectedCustomer, onClose, onSubmit, l
           </div>
 
           <div className="flex gap-3 pt-4">
-            <button 
-              type="button" 
-              onClick={onClose}
-              className="flex-1 px-4 py-2.5 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-all font-semibold"
-            >
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-3 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-all font-semibold">
               Cancel
             </button>
-            <button 
-              type="submit" 
-              disabled={loading}
-              className="flex-1 px-4 py-2.5 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-all font-semibold disabled:opacity-50"
-            >
+            <button type="submit" disabled={loading} className="flex-1 px-4 py-3 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg hover:from-green-600 hover:to-green-700 transition-all font-semibold disabled:opacity-50">
               {loading ? 'Creating...' : 'Create Transaction'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function EditTransactionModal({ transaction, onClose, onSubmit, loading }) {
+  const [formData, setFormData] = useState({
+    customerName: transaction.customerName || '',
+    sn: transaction.sn,
+    date: transaction.date || new Date().toISOString().split('T')[0],
+    description: transaction.description || '',
+    item: transaction.item || '',
+    weightQty: transaction.weightQty || '',
+    rate: transaction.rate || '',
+    transactionType: transaction.transactionType || 'Sale/Purchase',
+    paymentMethod: transaction.paymentMethod || '',
+    bankName: transaction.bankName || '',
+    chequeNo: transaction.chequeNo || '',
+    drCr: transaction.debit > 0 ? 'Debit' : 'Credit',
+    amount: transaction.debit || transaction.credit || ''
+  });
+
+  const items = [
+    'Chilled Gots',
+    'Chilled Scrape',
+    'Guides',
+    'Chilled Rolls',
+    'Silver',
+    'Steel',
+    'Barring',
+    'Nickle',
+    'Molli',
+    'Fero Powder',
+    'Fire Bricks',
+    'H Oil',
+    'Magnese',
+    'Chrome',
+    'Black Scrape',
+    'White Scrape',
+    'Toka Scrape',
+    'Pig Scrape'
+  ];
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    const result = await onSubmit(formData);
+    if (result.success) onClose();
+  };
+
+  useEffect(() => {
+    const weight = parseFloat(formData.weightQty) || 0;
+    const rate = parseFloat(formData.rate) || 0;
+    
+    if (weight && rate) {
+      const scrapeItems = ['Black Scrape', 'White Scrape', 'Toka Scrape', 'Pig Scrape'];
+      let amount;
+      
+      if (scrapeItems.includes(formData.item)) {
+        amount = (weight / 37.324) * rate;
+      } else {
+        amount = weight * rate;
+      }
+      
+      setFormData(prev => ({ ...prev, amount: amount.toFixed(2) }));
+    }
+  }, [formData.weightQty, formData.rate, formData.item]);
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+      <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full p-6 my-8">
+        <div className="flex justify-between items-center mb-6">
+          <h3 className="text-2xl font-bold text-gray-900">Edit Transaction</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X className="w-6 h-6" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Customer *</label>
+              <input
+                type="text"
+                required
+                disabled
+                value={formData.customerName}
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg bg-gray-100 cursor-not-allowed"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Date *</label>
+              <input
+                type="date"
+                required
+                value={formData.date}
+                onChange={(e) => setFormData({ ...formData, date: e.target.value })}
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">Description *</label>
+            <input
+              type="text"
+              required
+              value={formData.description}
+              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all"
+              placeholder="Enter transaction description"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Item</label>
+              <select
+                value={formData.item}
+                onChange={(e) => setFormData({ ...formData, item: e.target.value })}
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all"
+              >
+                <option value="">Select Item</option>
+                {items.map((item, i) => (
+                  <option key={i} value={item}>{item}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Transaction Type</label>
+              <select
+                value={formData.transactionType}
+                onChange={(e) => setFormData({ ...formData, transactionType: e.target.value })}
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all"
+              >
+                <option value="Sale">Sale</option>
+                <option value="Purchase">Purchase</option>
+                <option value="Payment Received">Payment Received</option>
+                <option value="Payment Given">Payment Given</option>
+                <option value="Opening Balance">Opening Balance</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Weight/Qty</label>
+              <input
+                type="number"
+                step="0.01"
+                value={formData.weightQty}
+                onChange={(e) => setFormData({ ...formData, weightQty: e.target.value })}
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all"
+                placeholder="0.00"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Rate (PKR)</label>
+              <input
+                type="number"
+                step="0.01"
+                value={formData.rate}
+                onChange={(e) => setFormData({ ...formData, rate: e.target.value })}
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all"
+                placeholder="0.00"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Amount (PKR) *</label>
+              <input
+                type="number"
+                step="0.01"
+                required
+                value={formData.amount}
+                onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all bg-yellow-50"
+                placeholder="Auto-calculated"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Payment Method</label>
+              <select
+                value={formData.paymentMethod}
+                onChange={(e) => setFormData({ ...formData, paymentMethod: e.target.value })}
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all"
+              >
+                <option value="">Select</option>
+                <option value="Cash">Cash</option>
+                <option value="Cheque">Cheque</option>
+                <option value="Bank Transfer">Bank Transfer</option>
+                <option value="Jazzcash">Jazzcash</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Bank Name</label>
+              <input
+                type="text"
+                value={formData.bankName}
+                onChange={(e) => setFormData({ ...formData, bankName: e.target.value })}
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all"
+                placeholder="Optional"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Cheque No.</label>
+              <input
+                type="text"
+                value={formData.chequeNo}
+                onChange={(e) => setFormData({ ...formData, chequeNo: e.target.value })}
+                className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all"
+                placeholder="Optional"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">Debit/Credit *</label>
+            <select
+              required
+              value={formData.drCr}
+              onChange={(e) => setFormData({ ...formData, drCr: e.target.value })}
+              className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition-all"
+            >
+              <option value="Debit">Debit</option>
+              <option value="Credit">Credit</option>
+            </select>
+          </div>
+
+          <div className="flex gap-3 pt-4">
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-3 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-all font-semibold">
+              Cancel
+            </button>
+            <button type="submit" disabled={loading} className="flex-1 px-4 py-3 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-lg hover:from-blue-600 hover:to-blue-700 transition-all font-semibold disabled:opacity-50">
+              {loading ? 'Updating...' : 'Update Transaction'}
             </button>
           </div>
         </form>
