@@ -158,36 +158,42 @@ export default function ERPLedgerApp() {
   }, []);
 
   const refreshAllData = useCallback(async () => {
-    if (!isOnline) {
-      setError('You are offline. Showing cached data.');
-      return;
-    }
+  if (!isOnline) {
+    setError('You are offline. Showing cached data.');
+    return;
+  }
 
-    setLoading(true);
-    setError(null);
-    try {
-      const [customersData, balanceData] = await Promise.all([
-        fetchCustomers(), 
-        fetchBalanceSheet()
-      ]);
-      
-      const calculatedSummary = calculateSummaryFromBalanceSheet(balanceData);
-      setSummary(calculatedSummary);
-      
-      saveOfflineData({
-        customers: customersData,
-        balanceSheet: balanceData,
-        summary: calculatedSummary
-      });
-      
-      setLastSync(new Date());
-    } catch (err) {
-      setError('Failed to refresh data');
-    } finally {
-      setLoading(false);
-    }
-  }, [isOnline, calculateSummaryFromBalanceSheet, saveOfflineData]);
-
+  setLoading(true);
+  setError(null);
+  try {
+    console.log('Refreshing all data...');
+    const [customersData, balanceData] = await Promise.all([
+      fetchCustomers(), 
+      fetchBalanceSheet()
+    ]);
+    
+    console.log('Customers data:', customersData);
+    console.log('Balance data:', balanceData);
+    
+    const calculatedSummary = calculateSummaryFromBalanceSheet(balanceData);
+    setSummary(calculatedSummary);
+    
+    saveOfflineData({
+      customers: customersData,
+      balanceSheet: balanceData,
+      summary: calculatedSummary
+    });
+    
+    setLastSync(new Date());
+    console.log('Refresh completed successfully');
+  } catch (err) {
+    console.error('Refresh error:', err);
+    setError('Failed to refresh data: ' + err.message);
+  } finally {
+    setLoading(false);
+  }
+}, [isOnline, calculateSummaryFromBalanceSheet, saveOfflineData]);
+  
   const fetchCustomers = async () => {
     try {
       const response = await fetch(`${API_URL}?method=getCustomers`, {
@@ -383,49 +389,64 @@ export default function ERPLedgerApp() {
   const createTransaction = async (transactionData) => {
     try {
       setLoading(true);
-      
+      console.log('Sending transaction data:', transactionData); // ADD THIS
       const apiData = {
-        method: 'createTransaction',
-        customerName: transactionData.customerName,
-        date: transactionData.date,
-        description: transactionData.description,
-        item: transactionData.item,
-        weightQty: transactionData.weightQty,
-        rate: transactionData.rate,
-        transactionType: transactionData.transactionType,
-        paymentMethod: transactionData.paymentMethod,
-        bankName: transactionData.bankName,
-        chequeNo: transactionData.chequeNo,
-        amount: transactionData.amount,
-        drCr: transactionData.drCr
-      };
+      method: 'createTransaction',
+      customerName: transactionData.customerName.trim(),
+      date: transactionData.date,
+      description: transactionData.description.trim(),
+      item: (transactionData.item || '').trim(),
+      weightQty: transactionData.weightQty || '',
+      rate: transactionData.rate || '',
+      transactionType: transactionData.transactionType,
+      paymentMethod: transactionData.paymentMethod || '',
+      bankName: transactionData.bankName || '',
+      chequeNo: transactionData.chequeNo || '',
+      amount: parseFloat(transactionData.amount) || 0, // Ensure it's a number
+      drCr: transactionData.drCr
+    };
+console.log('Formatted API Data:', apiData);
 
-      const params = new URLSearchParams(apiData);
-      const response = await fetch(`${API_URL}?${params.toString()}`, {
-        method: 'GET',
-        mode: 'cors',
-        headers: { 'Accept': 'application/json' }
-      });
+    const params = new URLSearchParams();
+    Object.entries(apiData).forEach(([key, value]) => {
+      params.append(key, value.toString());
+    });
 
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-      const data = await response.json();
+    const url = `${API_URL}?${params.toString()}`;
+    console.log('Final URL:', url);
 
+    const response = await fetch(url, {
+      method: 'GET',
+      mode: 'cors',
+      headers: { 'Accept': 'application/json' }
+    });
+
+    const data = await response.json();
+    console.log('Full API Response:', data);
+      
       if (data.success) {
-        await refreshAllData();
-        if (selectedCustomer) {
-          await fetchCustomerTransactions(selectedCustomer.name);
-        }
-        setShowAddTransaction(false);
-        return { success: true };
+      // Force refresh all data
+      await Promise.all([
+        fetchCustomers(),
+        fetchBalanceSheet()
+      ]);
+      
+      if (selectedCustomer) {
+        await fetchCustomerTransactions(selectedCustomer.name);
       }
-      throw new Error(data.error || 'Failed to create transaction');
-    } catch (err) {
-      setError('Failed to create transaction: ' + err.message);
-      return { success: false, error: err.message };
-    } finally {
-      setLoading(false);
+      
+      setShowAddTransaction(false);
+      return { success: true };
     }
-  };
+    throw new Error(data.error || 'Failed to create transaction');
+  } catch (err) {
+    console.error('Transaction error details:', err);
+    setError(`Failed: ${err.message}`);
+    return { success: false, error: err.message };
+  } finally {
+    setLoading(false);
+  }
+};
 
   const updateTransaction = async (transactionData) => {
     try {
